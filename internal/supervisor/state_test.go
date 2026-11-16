@@ -11,6 +11,9 @@ func TestAfterChildExit(t *testing.T) {
 		{Running, 0, Finished},
 		{Running, 1, Failed},
 		{Running, 7, Failed},
+		{Restoring, 0, Failed},
+		{Checkpointing, 0, Failed},
+		{Checkpointing, 1, Failed},
 		{Checkpointed, 1, Checkpointed},
 		{Finished, 1, Finished},
 	}

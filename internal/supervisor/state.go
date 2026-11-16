@@ -14,11 +14,15 @@ const (
 
 // afterChildExit is the state a workload moves to when its training process exits with code.
 func afterChildExit(current State, code int) State {
-	if current != Running {
+	switch current {
+	case Running:
+		if code == 0 {
+			return Finished
+		}
+		return Failed
+	case Restoring, Checkpointing:
+		return Failed
+	default:
 		return current
 	}
-	if code == 0 {
-		return Finished
-	}
-	return Failed
 }

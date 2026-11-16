@@ -34,7 +34,7 @@ func TestSocketConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	sup := New()
+	sup := New(Config{Workload: "w"}, nil)
 	go sup.Serve(listener)
 
 	if got := status(t, path); got.State != "Running" || got.Step != 0 {
@@ -71,7 +71,7 @@ func TestListenRefusesALiveSupervisor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	go New().Serve(first)
+	go New(Config{Workload: "w"}, nil).Serve(first)
 
 	if second, err := Listen(path); err == nil {
 		second.Close()
