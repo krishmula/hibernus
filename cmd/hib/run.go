@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/krishmula/hibernus/internal/protocol"
+	"github.com/krishmula/hibernus/internal/supervisor"
 )
 
 const runUsage = "usage: hib run [--workload <name>] <command> [args...]\n"
@@ -40,11 +43,23 @@ func runCommand(args []string) int {
 		return exitBadCommand
 	}
 
-	return runChild(command)
+	return supervise(*workload, command)
 }
 
-func runChild(command []string) int {
+func supervise(workload string, command []string) int {
+	socketPath := protocol.SocketPath(workload)
+	listener, err := supervisor.Listen(socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
+		return exitFailed
+	}
+	defer listener.Close()
+
+	sup := supervisor.New()
+	go sup.Serve(listener)
+
 	child := exec.Command(command[0], command[1:]...)
+	child.Env = append(os.Environ(), protocol.SocketEnv+"="+socketPath)
 	child.Stdin = os.Stdin
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
@@ -58,7 +73,13 @@ func runChild(command []string) int {
 		return exitFailed
 	}
 
-	err := child.Wait()
+	code := childExitCode(child.Wait())
+	sup.ChildExited(code)
+	return code
+}
+
+// childExitCode turns the result of Wait into the exit code hib run passes on.
+func childExitCode(err error) int {
 	if err == nil {
 		return exitOK
 	}

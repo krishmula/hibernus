@@ -6,9 +6,10 @@ import (
 )
 
 const (
-	exitOK         = 0
-	exitFailed     = 1
-	exitBadCommand = 2
+	exitOK           = 0
+	exitFailed       = 1
+	exitBadCommand   = 2
+	exitNoSupervisor = 3
 )
 
 const usage = `usage: hib <command> [flags]
@@ -16,7 +17,7 @@ const usage = `usage: hib <command> [flags]
 commands:
   run [--workload <name>] <command> [args...]   start a workload under a Supervisor
   checkpoint                                    checkpoint a running workload
-  status                                        show a workload's state
+  status [--workload <name>]                    show a workload's state
   restore <location>                            restore a workload from a restore point
 `
 
@@ -33,7 +34,9 @@ func dispatch(args []string) int {
 	switch command := args[0]; command {
 	case "run":
 		return runCommand(args[1:])
-	case "checkpoint", "status", "restore":
+	case "status":
+		return statusCommand(args[1:])
+	case "checkpoint", "restore":
 		fmt.Fprintf(os.Stderr, "hib %s: not built yet\n", command)
 		return exitFailed
 	case "help", "-h", "--help":

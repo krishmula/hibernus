@@ -5,6 +5,7 @@ build:
 
 check: build
 	go vet ./...
+	go test -race ./...
 	@./bin/hib >/dev/null 2>&1; code=$$?; \
 	if [ $$code -ne 2 ]; then echo "hib with no command exited $$code, want 2"; exit 1; fi
 	uv venv -q --allow-existing .venv
