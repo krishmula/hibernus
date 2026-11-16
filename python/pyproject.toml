@@ -1,0 +1,9 @@
+[project]
+name = "hibernus"
+version = "0.0.1"
+description = "The Hibernus training hook"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
