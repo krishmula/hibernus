@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -38,8 +40,34 @@ func runCommand(args []string) int {
 		return exitBadCommand
 	}
 
-	fmt.Printf("workload: %s\ncommand: %s\n", *workload, strings.Join(command, " "))
-	return exitOK
+	return runChild(command)
+}
+
+func runChild(command []string) int {
+	child := exec.Command(command[0], command[1:]...)
+	child.Stdin = os.Stdin
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+
+	if err := child.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
+		return exitFailed
+	}
+
+	err := child.Wait()
+	if err == nil {
+		return exitOK
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
+		return exitErr.ExitCode()
+	}
+	fmt.Fprintf(os.Stderr, "hib run: training process %v\n", err)
+	return exitFailed
 }
 
 func defaultWorkloadName(command []string) string {
