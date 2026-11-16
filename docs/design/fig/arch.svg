@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1640" height="1010" viewBox="0 0 1640 1010">
+<defs><marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1A73E8"/></marker><marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8430CE"/></marker><marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5F6368"/></marker></defs>
+<rect width="1640" height="1010" fill="#FFFFFF"/>
+<rect x="70" y="40" width="460" height="70" rx="10" fill="#F1F3F4" stroke="#5F6368" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="300.0" y="66.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#3C4043">Disruption signal</text>
+<text x="300.0" y="90.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">spot notice, maintenance, or the demo's emulated signal</text>
+<rect x="40" y="170" width="520" height="690" rx="16" fill="#FAFAFA" stroke="#9AA0A6" stroke-width="1.5"/>
+<text x="60" y="842" font-family="Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#3C4043">Saving host (Linux, NVIDIA GPU)</text>
+<rect x="70" y="220" width="460" height="66" rx="10" fill="#F1F3F4" stroke="#5F6368" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="300.0" y="244.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#3C4043">Disruption handler</text>
+<text x="300.0" y="268.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">outside Hibernus</text>
+<rect x="70" y="330" width="460" height="56" rx="10" fill="#E8F0FE" stroke="#1A73E8" stroke-width="2"/>
+<text x="300.0" y="349.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#174EA6">hib checkpoint</text>
+<text x="300.0" y="373.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">short-lived client</text>
+<rect x="70" y="440" width="460" height="84" rx="10" fill="#E8F0FE" stroke="#1A73E8" stroke-width="2"/>
+<text x="300.0" y="473.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#174EA6">Supervisor</text>
+<text x="300.0" y="497.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">hib run · parent of the training process</text>
+<rect x="70" y="600" width="460" height="100" rx="10" fill="#E6F4EA" stroke="#188038" stroke-width="2"/>
+<text x="300.0" y="641.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#0D652D">Training process</text>
+<text x="300.0" y="665.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">train.py + training hook</text>
+<rect x="70" y="740" width="460" height="50" rx="10" fill="#E6F4EA" stroke="#188038" stroke-width="2"/>
+<text x="300.0" y="772.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0D652D">GPU</text>
+<line x1="300.0" y1="110" x2="300.0" y2="218" stroke="#5F6368" stroke-width="2.5" stroke-dasharray="6 5" marker-end="url(#g)"/>
+<line x1="300.0" y1="286" x2="300.0" y2="328" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<circle cx="334.0" cy="307" r="15" fill="#1A73E8"/>
+<text x="334.0" y="312" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">1</text>
+<text x="358.0" y="312" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">request a checkpoint</text>
+<line x1="190" y1="386" x2="190" y2="438" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<text x="178" y="418" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">local socket</text>
+<line x1="450" y1="440" x2="450" y2="388" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<circle cx="418" cy="414" r="15" fill="#1A73E8"/>
+<text x="418" y="419" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">5</text>
+<text x="398" y="419" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">confirm: step, checkpoint time</text>
+<line x1="150" y1="524" x2="150" y2="598" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<circle cx="180" cy="548" r="15" fill="#1A73E8"/>
+<text x="180" y="553" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">2</text>
+<text x="204" y="553" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">pause at the update boundary</text>
+<line x1="450" y1="524" x2="450" y2="598" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<circle cx="420" cy="578" r="15" fill="#1A73E8"/>
+<text x="420" y="583" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">3</text>
+<text x="396" y="583" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">snapshot GPU and process</text>
+<line x1="300.0" y1="700" x2="300.0" y2="740" stroke="#188038" stroke-width="2"/>
+<rect x="700" y="400" width="240" height="250" rx="12" fill="#FEF7E0" stroke="#E37400" stroke-width="2"/>
+<text x="820.0" y="432" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" fill="#8A4B00">Checkpoint store</text>
+<text x="820.0" y="452" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">S3</text>
+<rect x="716" y="472" width="208" height="48" rx="6" fill="#FFFFFF" stroke="#E37400" stroke-width="1"/>
+<text x="820.0" y="493" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#3C4043">Process snapshot</text>
+<text x="820.0" y="511" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5F6368">CRIU + cuda-checkpoint</text>
+<rect x="716" y="530" width="208" height="48" rx="6" fill="#FFFFFF" stroke="#E37400" stroke-width="1"/>
+<text x="820.0" y="551" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#3C4043">Application checkpoint</text>
+<text x="820.0" y="569" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5F6368">model, optimizer, data position</text>
+<rect x="716" y="588" width="208" height="48" rx="6" fill="#FFFFFF" stroke="#E37400" stroke-width="1"/>
+<text x="820.0" y="609" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#3C4043">Manifest</text>
+<text x="820.0" y="627" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#5F6368">written last, marks it complete</text>
+<line x1="530" y1="482" x2="698" y2="482" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<circle cx="625" cy="455" r="15" fill="#1A73E8"/>
+<text x="625" y="460" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">4</text>
+<text x="630" y="512" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">upload, verify</text>
+<rect x="1110" y="40" width="460" height="70" rx="10" fill="#F1F3F4" stroke="#5F6368" stroke-width="2" stroke-dasharray="7 5"/>
+<text x="1340.0" y="66.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#3C4043">Launcher</text>
+<text x="1340.0" y="90.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Auto Scaling group, SkyPilot, or a person</text>
+<rect x="1080" y="170" width="520" height="690" rx="16" fill="#FAFAFA" stroke="#9AA0A6" stroke-width="1.5"/>
+<text x="1100" y="842" font-family="Helvetica, Arial, sans-serif" font-size="17" font-weight="700" fill="#3C4043">Restore host (same GPU model and software stack)</text>
+<line x1="1340.0" y1="110" x2="1340.0" y2="438" stroke="#8430CE" stroke-width="2.5" marker-end="url(#r)"/>
+<circle cx="1374.0" cy="260" r="15" fill="#8430CE"/>
+<text x="1374.0" y="265" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">A</text>
+<text x="1398.0" y="255" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">bring up the host,</text>
+<text x="1398.0" y="273" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">run hib restore</text>
+<rect x="1110" y="440" width="460" height="84" rx="10" fill="#E8F0FE" stroke="#1A73E8" stroke-width="2"/>
+<text x="1340.0" y="473.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#174EA6">Supervisor</text>
+<text x="1340.0" y="497.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">hib restore</text>
+<rect x="1110" y="600" width="460" height="100" rx="10" fill="#E6F4EA" stroke="#188038" stroke-width="2"/>
+<text x="1340.0" y="641.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#0D652D">Training process</text>
+<text x="1340.0" y="665.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">restored, continues from the same step</text>
+<rect x="1110" y="740" width="460" height="50" rx="10" fill="#E6F4EA" stroke="#188038" stroke-width="2"/>
+<text x="1340.0" y="772.0" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0D652D">GPU</text>
+<line x1="942" y1="482" x2="1108" y2="482" stroke="#8430CE" stroke-width="2.5" marker-end="url(#r)"/>
+<circle cx="1015" cy="455" r="15" fill="#8430CE"/>
+<text x="1015" y="460" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">B</text>
+<text x="1010" y="512" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">download,</text>
+<text x="1010" y="530" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">check fingerprint</text>
+<line x1="1340.0" y1="524" x2="1340.0" y2="598" stroke="#8430CE" stroke-width="2.5" marker-end="url(#r)"/>
+<circle cx="1374.0" cy="561" r="15" fill="#8430CE"/>
+<text x="1374.0" y="566" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#fff">C</text>
+<text x="1398.0" y="548" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">restore the snapshot,</text>
+<text x="1398.0" y="567" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">or fall back to the</text>
+<text x="1398.0" y="586" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#3C4043">application checkpoint</text>
+<line x1="1340.0" y1="700" x2="1340.0" y2="740" stroke="#188038" stroke-width="2"/>
+<rect x="40" y="906" width="26" height="18" rx="4" fill="#E8F0FE" stroke="#1A73E8" stroke-width="2"/>
+<text x="76" y="920" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Hibernus</text>
+<rect x="174" y="906" width="26" height="18" rx="4" fill="#E6F4EA" stroke="#188038" stroke-width="2"/>
+<text x="210" y="920" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Workload</text>
+<rect x="308" y="906" width="26" height="18" rx="4" fill="#FEF7E0" stroke="#E37400" stroke-width="2"/>
+<text x="344" y="920" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Storage</text>
+<rect x="434" y="906" width="26" height="18" rx="4" fill="#F1F3F4" stroke="#5F6368" stroke-width="2" stroke-dasharray="5 4"/>
+<text x="470" y="920" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Outside Hibernus</text>
+<line x1="662" y1="915" x2="702" y2="915" stroke="#1A73E8" stroke-width="2.5" marker-end="url(#s)"/>
+<text x="714" y="920" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Checkpoint path, steps 1 to 5</text>
+<line x1="984" y1="915" x2="1024" y2="915" stroke="#8430CE" stroke-width="2.5" marker-end="url(#r)"/>
+<text x="1036" y="920" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#3C4043">Restore path, steps A to C</text>
+<text x="40" y="958" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#5F6368">Step 2: the training hook stops the loop before the next batch and writes the application checkpoint.</text>
+<text x="40" y="977" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#5F6368">Step 3: cuda-checkpoint moves GPU state into host memory, then CRIU writes the process snapshot.</text>
+</svg>

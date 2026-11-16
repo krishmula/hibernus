@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How hib Works</title>
+<style>
+:root {
+  --fb-bg: #fbfaf7; --fb-fg: #1d1d1b; --fb-mut: #6b6a66; --fb-card: #ffffff; --fb-border: #e3e1db;
+  --fb-info: #2f6fd6; --fb-success: #2e9a4f; --fb-warning: #c98a12; --fb-primary: #2f6fd6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fb-bg: #161615; --fb-fg: #eceae4; --fb-mut: #a3a19b; --fb-card: #1f1f1d; --fb-border: #34332f;
+    --fb-info: #6c9cf0; --fb-success: #5cc27c; --fb-warning: #e0a93a; --fb-primary: #4f86e8;
+  }
+}
+:root {
+  --fg: var(--foreground, var(--fb-fg)); --mut: var(--muted-foreground, var(--fb-mut)); --line: var(--mut);
+  --cardc: var(--card, var(--fb-card)); --bord: var(--border, var(--fb-border));
+  --inf: var(--info, var(--fb-info)); --suc: var(--success, var(--fb-success)); --warn: var(--warning, var(--fb-warning));
+  --hib-stroke: var(--inf); --hib-fill: color-mix(in srgb, var(--inf) 14%, transparent);
+  --train-stroke: var(--suc); --train-fill: color-mix(in srgb, var(--suc) 14%, transparent);
+  --ck-stroke: var(--warn); --ck-fill: color-mix(in srgb, var(--warn) 16%, transparent);
+  --out-stroke: var(--mut); --host-fill: color-mix(in srgb, var(--fg) 4%, transparent);
+  --acc: var(--primary, var(--fb-primary));
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background, var(--fb-bg)); color: var(--fg); font: 15px/1.5 var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--mut); margin: 0 0 20px; }
+main { max-width: 1040px; margin: 0 auto; padding: 16px; }
+code, .mono { font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: 0.92em; }
+.roles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+@media (max-width: 560px) { .roles { grid-template-columns: 1fr; } }
+.role { background: var(--cardc); border: 1px solid var(--bord); border-radius: var(--radius, 10px); padding: 16px; }
+.role h2 { font-size: 15px; margin: 0 0 6px; }
+.role ul { margin: 6px 0 0; padding-left: 18px; }
+.role p { margin: 0; color: var(--mut); font-size: 14px; }
+.stage { }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--fg); font-size: 15px; }
+svg .t { font-size: 17.5px; font-weight: 600; }
+svg .s { fill: var(--mut); font-size: 14.5px; }
+svg .m { font-family: var(--font-mono, ui-monospace, Menlo, monospace); }
+svg .lbl { fill: var(--mut); font-size: 14px; }
+.host { fill: var(--host-fill); stroke: var(--bord); stroke-width: 1.5; }
+.hib { fill: var(--hib-fill); stroke: var(--hib-stroke); stroke-width: 1.8; }
+.train { fill: var(--train-fill); stroke: var(--train-stroke); stroke-width: 1.8; }
+.ck { fill: var(--ck-fill); stroke: var(--ck-stroke); stroke-width: 1.8; }
+.out { fill: none; stroke: var(--out-stroke); stroke-width: 1.6; stroke-dasharray: 6 4; }
+.sock { fill: var(--background, var(--fb-bg)); stroke: var(--hib-stroke); stroke-width: 1.4; }
+.arrow { fill: none; stroke: var(--line); stroke-width: 1.8; }
+[data-steps] { transition: opacity .25s; }
+.dim { opacity: .14; }
+.hot .arrow { stroke: var(--acc); stroke-width: 2.4; }
+.controls { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+button { font: inherit; padding: 7px 14px; border-radius: var(--radius, 10px); border: 1px solid var(--bord); background: var(--cardc); color: var(--fg); cursor: pointer; }
+button.primary { background: var(--acc); border-color: var(--acc); color: var(--primary-foreground, #fff); }
+button:disabled { opacity: .4; cursor: default; }
+.count { color: var(--mut); font-size: 14px; }
+.caption { margin-top: 10px; min-height: 96px; background: var(--cardc); border: 1px solid var(--bord); border-left: 4px solid var(--acc); border-radius: var(--radius, 10px); padding: 16px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 0; font-size: 13px; color: var(--mut); }
+.sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 6px; border: 1.8px solid; }
+</style>
+</head>
+<body>
+<main>
+<h1>How <code>hib</code> works</h1>
+<p class="sub">One workload, one disruption, from <code>hib run</code> to <code>hib restore</code>. Press Next or the arrow keys.</p>
+
+<div class="roles">
+  <div class="role">
+    <h2>Commands that stay running as the Supervisor</h2>
+    <p>One Supervisor per workload. It is the parent of <code>train.py</code> and listens on its socket.</p>
+    <ul><li><code>hib run train.py</code></li><li><code>hib restore &lt;location&gt;</code></li></ul>
+  </div>
+  <div class="role">
+    <h2>Commands that send one message and exit</h2>
+    <p>They talk to a running Supervisor through its socket. They start no processes.</p>
+    <ul><li><code>hib checkpoint --workload train</code></li><li><code>hib status --workload train</code></li></ul>
+  </div>
+</div>
+
+<div class="stage">
+<svg viewBox="0 0 1000 615" role="img" aria-label="Diagram of hib run, hib checkpoint and hib restore across two hosts">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/>
+    </marker>
+  </defs>
+
+  <rect class="host" x="20" y="80" width="450" height="400" rx="12"/>
+  <text class="t" x="36" y="106">Checkpoint host</text>
+  <rect class="host" x="530" y="80" width="450" height="400" rx="12"/>
+  <text class="t" x="546" y="106">Restore host</text>
+
+  <g id="launcher" data-steps="7">
+    <rect class="out" x="600" y="10" width="200" height="52" rx="8"/>
+    <text class="t" x="700" y="33" text-anchor="middle">Launcher</text>
+    <text class="s" x="700" y="52" text-anchor="middle">outside Hibernus</text>
+  </g>
+  <g id="f" data-steps="7">
+    <path class="arrow" d="M680,64 V118" marker-end="url(#ah)"/>
+    <text class="lbl" x="688" y="100">runs</text>
+  </g>
+
+  <g id="dh" data-steps="3">
+    <rect class="out" x="40" y="120" width="190" height="60" rx="8"/>
+    <text class="t" x="135" y="146" text-anchor="middle">Disruption handler</text>
+    <text class="s" x="135" y="166" text-anchor="middle">outside Hibernus</text>
+  </g>
+  <g id="a" data-steps="3">
+    <path class="arrow" d="M232,150 H268" marker-end="url(#ah)"/>
+    <text class="lbl" x="250" y="142" text-anchor="middle">runs</text>
+  </g>
+  <g id="ckptcmd" data-steps="3,4,6">
+    <rect class="hib" x="270" y="120" width="180" height="60" rx="8"/>
+    <text class="t m" x="360" y="146" text-anchor="middle">hib checkpoint</text>
+    <text class="s" x="360" y="166" text-anchor="middle">one message, exits</text>
+  </g>
+  <g id="b" data-steps="4">
+    <path class="arrow" d="M350,182 V246" marker-end="url(#ah)"/>
+    <text class="lbl" x="343" y="219" text-anchor="end">checkpoint now</text>
+  </g>
+  <g id="e" data-steps="6">
+    <path class="arrow" d="M420,246 V182" marker-end="url(#ah)"/>
+    <text class="lbl" x="427" y="219">done</text>
+  </g>
+
+  <g id="supOld" data-steps="1,2,4,5,6">
+    <rect class="hib" x="40" y="240" width="410" height="90" rx="10"/>
+    <text class="t" x="60" y="268">Supervisor</text>
+    <text class="s" x="60" y="290">started by <tspan class="m">hib run train.py</tspan></text>
+    <text class="s" x="60" y="310">one per workload</text>
+  </g>
+  <g id="sockOld" data-steps="1,4,6">
+    <rect class="sock" x="320" y="250" width="120" height="30" rx="6"/>
+    <text x="380" y="270" text-anchor="middle">socket</text>
+  </g>
+  <g id="c1" data-steps="1">
+    <path class="arrow" d="M400,332 V386" marker-end="url(#ah)"/>
+    <text class="lbl" x="392" y="364" text-anchor="end">starts it</text>
+  </g>
+  <g id="c2" data-steps="2,5">
+    <path class="arrow" d="M100,386 V332" marker-end="url(#ah)"/>
+    <text class="lbl m" x="108" y="364">at_boundary()</text>
+  </g>
+  <g id="childOld" data-steps="1,2,5">
+    <rect class="train" x="40" y="390" width="410" height="72" rx="10"/>
+    <text class="t m" x="60" y="415">train.py</text>
+    <text class="s" x="60" y="434">child of the Supervisor</text>
+    <text class="s" x="60" y="452">calls <tspan class="m">hib.at_boundary()</tspan> after each <tspan class="m">optimizer.step</tspan></text>
+  </g>
+
+  <g id="d" data-steps="5">
+    <path class="arrow" d="M452,300 H490 V516" marker-end="url(#ah)"/>
+    <text class="lbl" x="484" y="505" text-anchor="end">writes</text>
+  </g>
+  <g id="storage" data-steps="5,8">
+    <rect class="ck" x="330" y="520" width="340" height="84" rx="10"/>
+    <text class="t" x="500" y="548" text-anchor="middle">Restore point</text>
+    <text class="s" x="500" y="568" text-anchor="middle">local folder now, S3 later</text>
+    <text class="s" x="500" y="588" text-anchor="middle">fake for now: only "step 500"</text>
+  </g>
+  <g id="g" data-steps="8">
+    <path class="arrow" d="M510,516 V300 H548" marker-end="url(#ah)"/>
+    <text class="lbl" x="516" y="505">reads</text>
+  </g>
+
+  <g id="restore" data-steps="7,8">
+    <rect class="hib" x="550" y="120" width="200" height="60" rx="8"/>
+    <text class="t m" x="650" y="146" text-anchor="middle">hib restore</text>
+    <text class="s" x="650" y="166" text-anchor="middle">stays running</text>
+  </g>
+  <g id="becomes" data-steps="8">
+    <path class="arrow" d="M650,182 V236" marker-end="url(#ah)"/>
+    <text class="lbl" x="658" y="214">becomes</text>
+  </g>
+  <g id="supNew" data-steps="8">
+    <rect class="hib" x="550" y="240" width="410" height="90" rx="10"/>
+    <text class="t" x="570" y="268">Supervisor</text>
+    <text class="s" x="570" y="290">started by <tspan class="m">hib restore</tspan></text>
+    <text class="s" x="570" y="310">same workload, restore host</text>
+  </g>
+  <g id="sockNew" data-steps="8">
+    <rect class="sock" x="830" y="250" width="120" height="30" rx="6"/>
+    <text x="890" y="270" text-anchor="middle">socket</text>
+  </g>
+  <g id="bringback" data-steps="8">
+    <path class="arrow" d="M910,332 V386" marker-end="url(#ah)"/>
+    <text class="lbl" x="902" y="364" text-anchor="end">brings it back</text>
+  </g>
+  <g id="childNew" data-steps="8">
+    <rect class="train" x="550" y="390" width="410" height="72" rx="10"/>
+    <text class="t m" x="570" y="415">train.py</text>
+    <text class="s" x="570" y="434">child of the new Supervisor</text>
+    <text class="s" x="570" y="452">continues from step 501</text>
+  </g>
+</svg>
+
+<div class="controls">
+  <button id="prev">Back</button>
+  <button id="next" class="primary">Next</button>
+  <span class="count" id="count"></span>
+</div>
+<div class="caption" id="caption"></div>
+<div class="legend">
+  <span><span class="sw" style="background:var(--hib-fill);border-color:var(--hib-stroke)"></span>Hibernus</span>
+  <span><span class="sw" style="background:var(--train-fill);border-color:var(--train-stroke)"></span>Your training process</span>
+  <span><span class="sw" style="background:var(--ck-fill);border-color:var(--ck-stroke)"></span>Restore point</span>
+  <span><span class="sw" style="border-style:dashed;border-color:var(--out-stroke)"></span>Outside Hibernus</span>
+</div>
+</div>
+</main>
+<script>
+const captions = [
+  "The whole picture. Press Next to walk through one disruption, one step at a time.",
+  "You type <code>hib run train.py</code>. The <code>hib</code> program starts and stays running as the Supervisor. The Supervisor starts <code>train.py</code> as its child and opens its socket, so other commands can reach it.",
+  "Training runs. After every <code>optimizer.step</code>, <code>train.py</code> calls <code>hib.at_boundary()</code>. That call asks the Supervisor whether a checkpoint is pending. The answer is no, so training continues.",
+  "A disruption signal arrives. The Disruption handler, which is outside Hibernus, runs <code>hib checkpoint</code>. For now, you send this signal by hand.",
+  "<code>hib checkpoint</code> is short-lived. It sends one message, \"checkpoint now\", through the Supervisor's socket and waits. It never touches <code>train.py</code> itself.",
+  "At the next <code>hib.at_boundary()</code> call, the answer is yes. <code>train.py</code> pauses there, at the update boundary. The Supervisor writes the restore point. Today this is fake and writes only \"step 500\". Later it holds the process snapshot (CRIU and cuda-checkpoint) and the application checkpoint.",
+  "The Supervisor replies \"done\" through the socket. <code>hib checkpoint</code> exits with code 0, which tells the Disruption handler the restore point is safe. The workload stops on this host and the Supervisor exits. Hibernus's work on the checkpoint host ends here.",
+  "The Launcher, which is outside Hibernus, brings up the restore host and runs <code>hib restore</code> there. For the demo, the Launcher is you or a script.",
+  "<code>hib restore</code> stays running as the new Supervisor. It reads the restore point and brings <code>train.py</code> back as its child. Training continues from step 501, as if nothing happened."
+];
+const last = captions.length - 1;
+const nodes = [...document.querySelectorAll('[data-steps]')];
+const prev = document.getElementById('prev'), next = document.getElementById('next');
+let step = 0;
+function render() {
+  nodes.forEach(n => {
+    const on = step === 0 || n.dataset.steps.split(',').includes(String(step));
+    n.classList.toggle('dim', !on);
+    n.classList.toggle('hot', on && step !== 0);
+  });
+  document.getElementById('caption').innerHTML = captions[step];
+  document.getElementById('count').textContent = step === 0 ? 'Overview' : `Step ${step} of ${last}`;
+  prev.disabled = step === 0;
+  next.textContent = step === last ? 'Start over' : 'Next';
+}
+next.onclick = () => { step = step === last ? 0 : step + 1; render(); };
+prev.onclick = () => { if (step > 0) { step--; render(); } };
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') next.click();
+  if (e.key === 'ArrowLeft') prev.click();
+});
+render();
+</script>
+</body>
+</html>
