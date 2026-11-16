@@ -118,11 +118,11 @@ The model weights and optimizer state are not in the manifest. They are files of
 
 ### First build
 
-The fake checkpoint writes a stand-in application checkpoint: one file that holds only the step. The process snapshot is `"status": "failed"` with the error `"not built yet"`. `fingerprint` stays empty, and `hib restore` skips that check. So the first build exercises the fallback path: `hib restore` starts a fresh training process from `command`, and that process reads the step from the file.
+The fake checkpoint writes a stand-in application checkpoint: one file, `app/step.json`, that holds only the step. The process snapshot is `"status": "failed"` with the error `"not built yet"`. `fingerprint` stays empty, and `hib restore` skips that check. So the first build exercises the fallback path: `hib restore` starts a fresh training process from `command`, and that process reads the step from the file.
 
 ### Open questions
 
-- `command.env` can hold secrets, such as cloud credentials, and the manifest sits in S3. Which variables does the Supervisor record?
+- `command.env` can hold secrets, such as cloud credentials, and the manifest sits in S3. Which variables does the Supervisor record? Until we decide, it records `{}`.
 
 ## Socket messages
 
@@ -146,11 +146,13 @@ The training hook keeps one connection open for the life of the training process
 | When | Hook sends | Supervisor replies |
 |---|---|---|
 | The training process starts | `{"op": "start"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
-| Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true}` in Checkpointing. |
+| Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true, "dir": "..."}` in Checkpointing, where `dir` is the folder for the application checkpoint. A refusal in a final state, so training stops. |
 | After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. The hook waits on the connection, paused. |
 | After a CRIU restore | `{"op": "reconnect", "step": 1200}` | `{"continue": true}` |
 
 The hook's paused wait ends only when the connection breaks. On the checkpoint host, that happens when the host goes away. After a CRIU restore, the training process comes back still waiting on the dead connection, so the hook sees the break, connects to the new Supervisor, and sends `reconnect`.
+
+A Supervisor that can't answer a message, such as one with an unknown `op`, replies `{"refused": "..."}`. The key differs from the `error` field of other replies, so a Failed status never reads as a refusal.
 
 The hook always asks `start` instead of assuming step 0. A fresh training process knows nothing about the earlier run, and only the Supervisor has read the manifest.
 
@@ -168,9 +170,11 @@ A Disruption handler sees only the number, so each code stands for a different a
 
 `hib status` exits 0 whenever it gets an answer, even when the state is Failed. It exits 2 or 3 only when the command is wrong or it can't reach the Supervisor.
 
+`hib restore` exits 1 when it refuses a restore point and 2 for a bad command. Otherwise it runs the training process like `hib run`, and exits with that process's exit code.
+
 ## First build
 
-The first build proves the whole path with a fake checkpoint, on macOS, with a toy CPU loop. Everything is real except the checkpoint itself. It runs on a branch, never on `main`.
+The first build proves the whole path with a fake checkpoint, on macOS, with a toy CPU loop. Everything is real except the checkpoint itself. It's built on a branch and reaches `main` only through a pull request.
 
 | Step | What it adds | Check |
 |---|---|---|
@@ -181,6 +185,10 @@ The first build proves the whole path with a fake checkpoint, on macOS, with a t
 
 The Supervisor and the `hib` commands are written in Go, as one binary. The training hook is written in Python, because it runs inside `train.py`. The socket messages above are the only contract between the two languages, and the end-to-end check catches any drift between them.
 
-The first build writes the restore point to a local folder instead of S3, so it needs no cloud setup. S3 comes later, as its own step.
+The first build writes the restore point to a local folder instead of S3, so it needs no cloud setup. S3 comes later, as its own step. The folder is `~/.hib/restore-points/<workload>/step-<K>/`, and `--store` on `hib run` and `hib restore` changes the part before `<workload>`.
+
+The Supervisor gives up on a checkpoint a tenth of the remaining time before the deadline, at most 5 seconds early. If the deadline arrives while a queued checkpoint waits in Restoring, only that request fails, and the restore goes on.
+
+`make e2e` runs steps 1 to 4 end to end: it checkpoints the toy loop, stops it as if the checkpoint host went away, and restores it. It fails if training restarts at step 1.
 
 Claude writes the code for each step and explains it. The user reviews each step and must understand it before the next one starts.
