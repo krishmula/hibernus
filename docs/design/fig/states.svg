@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="560" viewBox="0 0 1240 560">
+<style>.bg{fill:#FFFFFF}.ink{fill:#202124}.muted{fill:#5F6368}.edge{stroke:#5F6368}.edgebad{stroke:#C5221F}.head-edge{fill:#5F6368}.head-edgebad{fill:#C5221F}.pill{fill:#FFFFFF;stroke:#5F6368}.f-run{fill:#E8F0FE;stroke:#1A73E8} .t-run{fill:#174EA6}.f-ckpt{fill:#FEF7E0;stroke:#E37400} .t-ckpt{fill:#8A4B00}.f-done{fill:#E6F4EA;stroke:#188038} .t-done{fill:#0D652D}.f-fin{fill:#F1F3F4;stroke:#5F6368} .t-fin{fill:#3C4043}.f-bad{fill:#FCE8E6;stroke:#C5221F} .t-bad{fill:#A50E0E}.f-rest{fill:#F3E8FD;stroke:#8430CE} .t-rest{fill:#681DA8}@media (prefers-color-scheme: dark){.bg{fill:#0D1117}.ink{fill:#E6EDF3}.muted{fill:#9198A1}.edge{stroke:#9198A1}.edgebad{stroke:#F85149}.head-edge{fill:#9198A1}.head-edgebad{fill:#F85149}.pill{fill:#0D1117;stroke:#9198A1}.f-run{fill:#10243E;stroke:#4C8DF6} .t-run{fill:#A8C7FA}.f-ckpt{fill:#33260A;stroke:#E8A33D} .t-ckpt{fill:#F5CF8A}.f-done{fill:#0F2A19;stroke:#3FB950} .t-done{fill:#A6E3B5}.f-fin{fill:#1F242B;stroke:#8B949E} .t-fin{fill:#C9D1D9}.f-bad{fill:#3A1414;stroke:#F85149} .t-bad{fill:#FFB3AD}.f-rest{fill:#2A1A3D;stroke:#BC8CFF} .t-rest{fill:#DEC8FF}}</style>
+<defs><marker id="h-edge" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="head-edge"/></marker><marker id="h-edgebad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="head-edgebad"/></marker></defs>
+<rect width="1240" height="560" class="bg"/>
+<rect x="280" y="40" width="220" height="76" rx="12" class="f-fin" stroke-width="2"/>
+<rect x="285" y="45" width="210" height="66" rx="8" fill="none" class="f-fin" stroke-width="1.5" style="fill:none"/>
+<text x="390.0" y="73" class="t-fin" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">Finished</text>
+<text x="390.0" y="95" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">training ended by itself</text>
+<rect x="280" y="210" width="220" height="76" rx="12" class="f-run" stroke-width="2"/>
+<text x="390.0" y="243" class="t-run" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">Running</text>
+<text x="390.0" y="265" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">training runs steps</text>
+<rect x="640" y="210" width="220" height="76" rx="12" class="f-ckpt" stroke-width="2"/>
+<text x="750.0" y="243" class="t-ckpt" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">Checkpointing</text>
+<text x="750.0" y="265" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">paused, writing the restore point</text>
+<rect x="1000" y="210" width="220" height="76" rx="12" class="f-done" stroke-width="2"/>
+<rect x="1005" y="215" width="210" height="66" rx="8" fill="none" class="f-done" stroke-width="1.5" style="fill:none"/>
+<text x="1110.0" y="243" class="t-done" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">Checkpointed</text>
+<text x="1110.0" y="265" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">paused until the host goes away</text>
+<rect x="280" y="400" width="220" height="76" rx="12" class="f-rest" stroke-width="2"/>
+<text x="390.0" y="433" class="t-rest" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">Restoring</text>
+<text x="390.0" y="455" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">bringing training back</text>
+<rect x="640" y="400" width="220" height="76" rx="12" class="f-bad" stroke-width="2"/>
+<rect x="645" y="405" width="210" height="66" rx="8" fill="none" class="f-bad" stroke-width="1.5" style="fill:none"/>
+<text x="750.0" y="433" class="t-bad" font-family="Helvetica, Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">Failed</text>
+<text x="750.0" y="455" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">no restore point</text>
+<rect x="30" y="226.0" width="200" height="44" rx="22" class="pill" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="130.0" y="253.0" class="ink" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" text-anchor="middle">hib run</text>
+<rect x="30" y="416.0" width="200" height="44" rx="22" class="pill" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="130.0" y="443.0" class="ink" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" text-anchor="middle">hib restore &lt;location&gt;</text>
+<path d="M230,248.0 L278,248.0" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<path d="M230,438.0 L278,438.0" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<path d="M500,248.0 L638,248.0" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<text x="570.0" y="238.0" class="ink" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" text-anchor="middle">hib checkpoint</text>
+<path d="M860,248.0 L998,248.0" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<text x="930.0" y="220.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">1 or 2 layers</text>
+<text x="930.0" y="238.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">written</text>
+<path d="M390.0,210 L390.0,118" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<text x="378.0" y="168.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="end">training exits 0</text>
+<path d="M390.0,400 L390.0,288" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<text x="378.0" y="339.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="end">training is back</text>
+<text x="378.0" y="357.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="end">at step K</text>
+<path d="M500,438.0 L638,438.0" fill="none" class="edgebad" stroke-width="2" marker-end="url(#h-edgebad)"/>
+<text x="570.0" y="428.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">no layer works</text>
+<path d="M460,286 L670,398" fill="none" class="edgebad" stroke-width="2" marker-end="url(#h-edgebad)"/>
+<text x="552" y="316" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start">training dies</text>
+<path d="M790.0,286 L790.0,398" fill="none" class="edgebad" stroke-width="2" marker-end="url(#h-edgebad)"/>
+<text x="802.0" y="339.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start">deadline passes,</text>
+<text x="802.0" y="357.0" class="ink" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start">or training dies</text>
+<path d="M716.0,210 C716.0,154 784.0,154 784.0,208" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<text x="750.0" y="132" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">retries failed layers</text>
+<text x="750.0" y="149" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">until the deadline</text>
+<path d="M1076.0,210 C1076.0,154 1144.0,154 1144.0,208" fill="none" class="edge" stroke-width="2" marker-end="url(#h-edge)"/>
+<text x="1110.0" y="132" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">a repeat hib checkpoint</text>
+<text x="1110.0" y="149" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">gets the same restore point</text>
+<text x="390.0" y="498" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">a hib checkpoint that arrives here</text>
+<text x="390.0" y="515" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="middle">waits until Running</text>
+<rect x="760" y="504" width="34" height="22" rx="5" class="f-fin" stroke-width="2"/>
+<rect x="764" y="508" width="26" height="14" rx="3" class="f-fin" stroke-width="1.5" style="fill:none"/>
+<text x="804" y="520" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start">final state: nothing leaves it</text>
+<path d="M760,546 L794,546" class="edgebad" stroke-width="2" marker-end="url(#h-edgebad)"/>
+<text x="804" y="550" class="muted" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" text-anchor="start">leads to Failed</text>
+</svg>
