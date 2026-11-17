@@ -28,13 +28,14 @@ type Config struct {
 type Supervisor struct {
 	cfg Config
 
-	mu       sync.Mutex
-	state    State
-	step     int
-	resume   *protocol.Resume // what start answers; nil for a fresh run
-	attempt  *attempt         // the latest checkpoint, in progress or finished
-	location string           // the restore point folder, once Checkpointed
-	err      string           // why the workload Failed
+	// mu guards every field below. handle, join, ChildExited, and giveUp take it, and every method
+	// they call runs with it already held.
+	mu      sync.Mutex
+	state   State
+	step    int
+	resume  *protocol.Resume // what start answers; nil for a fresh run
+	attempt *attempt         // the latest checkpoint, in progress or finished
+	err     string           // why the workload Failed
 }
 
 // New makes a Supervisor. With resume nil, it starts in Running. With resume set, it starts in
@@ -60,7 +61,7 @@ func (s *Supervisor) ChildExited(code int) {
 	s.state = next
 }
 
-// fail moves to Failed and answers every hib checkpoint that waits. The caller holds s.mu.
+// fail moves to Failed and answers every hib checkpoint that waits.
 func (s *Supervisor) fail(reason string) {
 	s.state = Failed
 	s.err = reason
@@ -139,14 +140,7 @@ func (s *Supervisor) handle(req protocol.Request) any {
 
 	switch req.Op {
 	case protocol.OpStatus:
-		reply := protocol.StatusReply{State: string(s.state), Step: s.step}
-		if s.location != "" {
-			reply.Location = &s.location
-		}
-		if s.err != "" {
-			reply.Error = &s.err
-		}
-		return reply
+		return s.status()
 	case protocol.OpStart:
 		return s.start()
 	case protocol.OpBoundary:
@@ -157,6 +151,20 @@ func (s *Supervisor) handle(req protocol.Request) any {
 	default:
 		return protocol.Refusal{Reason: fmt.Sprintf("unknown op %q", req.Op)}
 	}
+}
+
+// status copies the fields it reports, because the reply is sent after s.mu is released.
+func (s *Supervisor) status() protocol.StatusReply {
+	reply := protocol.StatusReply{State: string(s.state), Step: s.step}
+	if s.state == Checkpointed {
+		location := s.attempt.root
+		reply.Location = &location
+	}
+	if s.err != "" {
+		reason := s.err
+		reply.Error = &reason
+	}
+	return reply
 }
 
 // start answers the training hook's first message: where training begins.

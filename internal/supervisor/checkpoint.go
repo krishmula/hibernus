@@ -14,6 +14,9 @@ import (
 // defaultDeadline applies when a checkpoint request carries no deadline.
 const defaultDeadline = 90 * time.Second
 
+// maxGiveUpMargin caps how long before the deadline the Supervisor gives up on a checkpoint.
+const maxGiveUpMargin = 5 * time.Second
+
 // attempt is one checkpoint. Every hib checkpoint that arrives while it runs waits for the same answer.
 type attempt struct {
 	root   string        // the restore point folder, chosen at the update boundary
@@ -25,7 +28,7 @@ func newAttempt() *attempt {
 	return &attempt{done: make(chan struct{})}
 }
 
-// resolve sets the answer once. Later calls do nothing. The caller holds the Supervisor's lock.
+// resolve sets the answer once. Later calls do nothing.
 func (a *attempt) resolve(result protocol.CheckpointReply) {
 	select {
 	case <-a.done:
@@ -50,13 +53,11 @@ func (s *Supervisor) join(deadline time.Time) *attempt {
 
 	switch s.state {
 	case Finished:
-		a := newAttempt()
-		a.resolve(protocol.CheckpointReply{State: string(Finished), Error: "training already finished"})
-		return a
+		return answered(protocol.CheckpointReply{State: string(Finished), Error: "training already finished"})
 	case Failed:
-		a := newAttempt()
-		a.resolve(protocol.CheckpointReply{State: string(Failed), Error: s.err})
-		return a
+		return answered(protocol.CheckpointReply{State: string(Failed), Error: s.err})
+	case Checkpointing, Checkpointed:
+		// Wait for the checkpoint in progress, or get the answer of the one that finished.
 	case Running:
 		// Switch state before any checkpoint work, so a second request joins this one.
 		s.state = Checkpointing
@@ -70,8 +71,14 @@ func (s *Supervisor) join(deadline time.Time) *attempt {
 	return s.attempt
 }
 
+// answered returns an attempt that already holds its answer, for a request the Supervisor answers at once.
+func answered(reply protocol.CheckpointReply) *attempt {
+	a := newAttempt()
+	a.resolve(reply)
+	return a
+}
+
 // startAttempt makes a new attempt and sets a timer that gives up on it near the deadline.
-// The caller holds s.mu.
 func (s *Supervisor) startAttempt(deadline time.Time) {
 	now := time.Now()
 	if deadline.IsZero() {
@@ -82,10 +89,10 @@ func (s *Supervisor) startAttempt(deadline time.Time) {
 	time.AfterFunc(giveUpAt(now, deadline).Sub(now), func() { s.giveUp(a) })
 }
 
-// giveUpAt keeps a tenth of the time left, at most 5 seconds, so the answer reaches the
+// giveUpAt keeps a tenth of the time left, at most maxGiveUpMargin, so the answer reaches the
 // Disruption handler before its deadline.
 func giveUpAt(now, deadline time.Time) time.Time {
-	margin := min(deadline.Sub(now)/10, 5*time.Second)
+	margin := min(deadline.Sub(now)/10, maxGiveUpMargin)
 	return deadline.Add(-max(margin, 0))
 }
 
@@ -110,7 +117,7 @@ func (s *Supervisor) giveUp(a *attempt) {
 }
 
 // pause runs at the first update boundary in Checkpointing. It makes the restore point folder and
-// tells the training hook to write the application checkpoint into it. The caller holds s.mu.
+// tells the training hook to write the application checkpoint into it.
 func (s *Supervisor) pause() any {
 	if s.attempt.root != "" {
 		return protocol.Refusal{Reason: "the training hook is already paused"}
@@ -138,7 +145,7 @@ func prepareFolder(root, app string) error {
 }
 
 // appCheckpointWritten runs when the training hook reports the application checkpoint. It writes
-// the manifest last and moves to Checkpointed. The caller holds s.mu.
+// the manifest last and moves to Checkpointed.
 func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
 	if s.state != Checkpointing || s.attempt.root == "" {
 		return
@@ -153,8 +160,7 @@ func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
 		return
 	}
 	s.state = Checkpointed
-	s.location = s.attempt.root
-	s.attempt.resolve(protocol.CheckpointReply{OK: true, Location: s.location, Manifest: &m})
+	s.attempt.resolve(protocol.CheckpointReply{OK: true, Location: s.attempt.root, Manifest: &m})
 }
 
 func (s *Supervisor) writeManifest(root string, written []string) (manifest.Manifest, error) {
