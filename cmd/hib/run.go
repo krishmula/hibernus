@@ -81,13 +81,7 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 		close(served)
 	}()
 
-	command := cfg.Command.Argv
-	child := exec.Command(command[0], command[1:]...)
-	child.Dir = cfg.Command.Cwd
-	child.Env = append(os.Environ(), protocol.SocketEnv+"="+socketPath)
-	child.Stdin = os.Stdin
-	child.Stdout = os.Stdout
-	child.Stderr = os.Stderr
+	child := trainingProcess(cfg.Command, socketPath)
 
 	// Ctrl-C reaches the training process too, because it shares the terminal. hib catches the
 	// signal and never reads it, so hib keeps running until the training process exits, and then
@@ -110,6 +104,18 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 	case <-time.After(closeGrace):
 	}
 	return code
+}
+
+// trainingProcess prepares the training process. It shares hib's terminal, and its environment
+// tells the training hook where the socket is.
+func trainingProcess(command manifest.Command, socketPath string) *exec.Cmd {
+	child := exec.Command(command.Argv[0], command.Argv[1:]...)
+	child.Dir = command.Cwd
+	child.Env = append(os.Environ(), protocol.SocketEnv+"="+socketPath)
+	child.Stdin = os.Stdin
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+	return child
 }
 
 // childExitCode turns the result of Wait into the exit code hib run passes on.
