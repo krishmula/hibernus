@@ -11,20 +11,15 @@ STEP_FILE = "step.json"
 
 
 class Hook:
-    """Talks to the Supervisor over its socket. Without a Supervisor, every call does nothing."""
+    """Talks to the Supervisor over its socket."""
 
-    def __init__(self, socket_path=None):
-        self._sock = None
-        self._file = None
-        if socket_path:
-            self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self._sock.connect(socket_path)
-            self._file = self._sock.makefile("rwb")
+    def __init__(self, socket_path):
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._sock.connect(socket_path)
+        self._file = self._sock.makefile("rwb")
 
     def start(self):
         """Returns the last finished step: 0 for a fresh run, or K after a restore from step K."""
-        if self._file is None:
-            return 0
         reply = self._send({"op": "start"})
         resume = reply["resume"]
         if resume is None:
@@ -33,8 +28,6 @@ class Hook:
 
     def boundary(self, step):
         """Reports that step finished. The training loop calls it at each update boundary."""
-        if self._file is None:
-            return
         reply = self._send({"op": "boundary", "step": step})
         if reply["pause"]:
             self._checkpoint(step, reply["dir"])
@@ -80,5 +73,18 @@ def _load_step(files, step):
     raise RuntimeError(f"the restore point has no {STEP_FILE}")
 
 
+class NoSupervisor:
+    """Stands in for Hook when the training process runs without hib, so training runs as usual."""
+
+    def start(self):
+        return 0
+
+    def boundary(self, step):
+        pass
+
+
 def connect():
-    return Hook(os.environ.get(SOCKET_ENV))
+    socket_path = os.environ.get(SOCKET_ENV)
+    if socket_path:
+        return Hook(socket_path)
+    return NoSupervisor()
