@@ -58,8 +58,8 @@ func TestVerifyCatchesAChangedFile(t *testing.T) {
 func TestVerifyRefusesAPathOutsideTheRestorePoint(t *testing.T) {
 	root, _ := writeRestorePoint(t)
 	outside := Layer{Status: StatusOK, Files: []File{{Path: "../elsewhere"}}}
-	if err := outside.Verify(root); err == nil {
-		t.Fatal("Verify accepted a path outside the restore point")
+	if err := outside.Verify(root); err == nil || !strings.Contains(err.Error(), "outside the restore point") {
+		t.Fatalf("Verify of ../elsewhere = %v, want an outside-the-restore-point error", err)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestLoadRefusesAnotherSchemaVersion(t *testing.T) {
 	if err := Write(root, Manifest{SchemaVersion: 2}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(root); err == nil {
-		t.Fatal("Load accepted schema_version 2")
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "schema_version 2") {
+		t.Fatalf("Load of schema_version 2 = %v, want a schema version error", err)
 	}
 }
