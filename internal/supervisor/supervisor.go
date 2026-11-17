@@ -129,7 +129,7 @@ func (s *Supervisor) serveConn(conn net.Conn) {
 
 // handle answers one message. A nil answer means no reply.
 func (s *Supervisor) handle(req protocol.Request) any {
-	if req.Op == "checkpoint" {
+	if req.Op == protocol.OpCheckpoint {
 		// It waits until the checkpoint ends, so it must not hold the lock while it waits.
 		return s.checkpoint(req.Deadline)
 	}
@@ -138,7 +138,7 @@ func (s *Supervisor) handle(req protocol.Request) any {
 	defer s.mu.Unlock()
 
 	switch req.Op {
-	case "status":
+	case protocol.OpStatus:
 		reply := protocol.StatusReply{State: string(s.state), Step: s.step}
 		if s.location != "" {
 			reply.Location = &s.location
@@ -147,11 +147,11 @@ func (s *Supervisor) handle(req protocol.Request) any {
 			reply.Error = &s.err
 		}
 		return reply
-	case "start":
+	case protocol.OpStart:
 		return s.start()
-	case "boundary":
+	case protocol.OpBoundary:
 		return s.boundary(req.Step)
-	case "app_checkpoint":
+	case protocol.OpAppCheckpoint:
 		s.appCheckpointWritten(req.Files, req.Error)
 		return nil
 	default:

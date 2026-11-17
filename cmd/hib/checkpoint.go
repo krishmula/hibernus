@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/krishmula/hibernus/internal/protocol"
+	"github.com/krishmula/hibernus/internal/supervisor"
 )
 
 const checkpointUsage = "usage: hib checkpoint [--workload <name>] [--deadline <90s | 2026-11-16T10:02:00Z>]\n"
@@ -40,7 +41,7 @@ func checkpointCommand(args []string) int {
 	}
 
 	var reply protocol.CheckpointReply
-	request := protocol.Request{Op: "checkpoint", Deadline: deadline}
+	request := protocol.Request{Op: protocol.OpCheckpoint, Deadline: deadline}
 	err = protocol.SendBefore(protocol.SocketPath(name), request, &reply, deadline.Add(answerGrace))
 	switch {
 	case errors.Is(err, protocol.ErrNoSupervisor):
@@ -52,7 +53,7 @@ func checkpointCommand(args []string) int {
 	case reply.OK:
 		fmt.Println(reply.Location)
 		return exitOK
-	case reply.State == "Finished":
+	case reply.State == string(supervisor.Finished):
 		fmt.Fprintln(os.Stderr, "hib checkpoint: training already finished, so there is nothing to checkpoint")
 		return exitFinished
 	default:

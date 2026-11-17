@@ -20,6 +20,17 @@ const SocketEnv = "HIB_SOCKET"
 // ErrNoSupervisor means that nothing answers on the socket.
 var ErrNoSupervisor = errors.New("no Supervisor answers")
 
+// Op names what a message to the Supervisor asks for.
+type Op string
+
+const (
+	OpStatus        Op = "status"
+	OpCheckpoint    Op = "checkpoint"
+	OpStart         Op = "start"
+	OpBoundary      Op = "boundary"
+	OpAppCheckpoint Op = "app_checkpoint"
+)
+
 // Request holds the fields for every message sent to the Supervisor. Op selects
 // the operation; each operation uses only the fields shown in these JSON examples:
 //
@@ -32,7 +43,7 @@ var ErrNoSupervisor = errors.New("no Supervisor answers")
 //
 // The socket path selects the workload, so requests need no workload name or PID.
 type Request struct {
-	Op       string    `json:"op"`
+	Op       Op        `json:"op"`
 	Step     int       `json:"step,omitempty"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Files    []string  `json:"files,omitempty"`

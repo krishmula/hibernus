@@ -30,7 +30,7 @@ func statusCommand(args []string) int {
 	}
 
 	var reply protocol.StatusReply
-	if err := protocol.Send(protocol.SocketPath(name), protocol.Request{Op: "status"}, &reply); err != nil {
+	if err := protocol.Send(protocol.SocketPath(name), protocol.Request{Op: protocol.OpStatus}, &reply); err != nil {
 		fmt.Fprintf(os.Stderr, "hib status: no Supervisor answers for workload %q: %v\n", name, err)
 		return exitNoSupervisor
 	}
