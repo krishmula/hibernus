@@ -19,13 +19,10 @@ const answerGrace = 5 * time.Second
 func checkpointCommand(args []string) int {
 	flags := flag.NewFlagSet("checkpoint", flag.ContinueOnError)
 	flags.Usage = func() { fmt.Fprint(os.Stderr, checkpointUsage) }
-	workload := flags.String("workload", "", "name of the workload")
+	workload := workloadFlag(flags)
 	deadlineFlag := flags.String("deadline", "90s", "when the host goes away: a duration or an RFC 3339 time")
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitOK
-		}
-		return exitBadCommand
+	if code, ok := parseFlags(flags, args); !ok {
+		return code
 	}
 	if flags.NArg() > 0 {
 		fmt.Fprint(os.Stderr, "hib checkpoint: unexpected arguments\n"+checkpointUsage)

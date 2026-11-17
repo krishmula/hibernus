@@ -18,11 +18,8 @@ func restoreCommand(args []string) int {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
 	flags.Usage = func() { fmt.Fprint(os.Stderr, restoreUsage) }
 	store := storeFlag(flags)
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitOK
-		}
-		return exitBadCommand
+	if code, ok := parseFlags(flags, args); !ok {
+		return code
 	}
 	if flags.NArg() != 1 {
 		fmt.Fprint(os.Stderr, "hib restore: give exactly one restore point location\n"+restoreUsage)
@@ -44,7 +41,7 @@ func restoreCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
 	}
-	resume, err := fallback(root, m)
+	resume, err := resumeFromApplicationCheckpoint(root, m)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
@@ -53,10 +50,10 @@ func restoreCommand(args []string) int {
 	return supervise(supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command}, resume)
 }
 
-// fallback checks that the application checkpoint can bring the workload back in a fresh training
-// process, and returns what the training hook loads. The first build never writes a process
+// resumeFromApplicationCheckpoint checks that the application checkpoint can bring the workload back
+// in a fresh training process, and returns what the training hook loads. The first build never writes a process
 // snapshot, so every restore takes this path.
-func fallback(root string, m manifest.Manifest) (*protocol.Resume, error) {
+func resumeFromApplicationCheckpoint(root string, m manifest.Manifest) (*protocol.Resume, error) {
 	if !validWorkloadName.MatchString(m.Workload) {
 		return nil, fmt.Errorf("the manifest names workload %q, which is not a valid name", m.Workload)
 	}

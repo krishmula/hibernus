@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -19,18 +18,17 @@ import (
 
 const runUsage = "usage: hib run [--workload <name>] [--store <folder>] <command> [args...]\n"
 
-var validWorkloadName = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+// closeGrace is how long hib run waits, after the training process exits, for each waiting
+// hib checkpoint to read its answer.
+const closeGrace = 2 * time.Second
 
 func runCommand(args []string) int {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	flags.Usage = func() { fmt.Fprint(os.Stderr, runUsage) }
-	workload := flags.String("workload", "", "name of the workload")
+	workload := workloadFlag(flags)
 	store := storeFlag(flags)
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitOK
-		}
-		return exitBadCommand
+	if code, ok := parseFlags(flags, args); !ok {
+		return code
 	}
 
 	command := flags.Args()
@@ -41,8 +39,8 @@ func runCommand(args []string) int {
 	if *workload == "" {
 		*workload = defaultWorkloadName(command)
 	}
-	if !validWorkloadName.MatchString(*workload) {
-		fmt.Fprintf(os.Stderr, "hib run: workload name %q may only use letters, digits, '.', '_', and '-'\n", *workload)
+	if err := checkWorkloadName(*workload); err != nil {
+		fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
 		return exitBadCommand
 	}
 
@@ -63,12 +61,6 @@ func runCommand(args []string) int {
 		// The manifest records no environment variables yet, because they can hold secrets.
 		Command: manifest.Command{Argv: command, Cwd: cwd, Env: map[string]string{}},
 	}, nil)
-}
-
-// storeFlag adds --store, the folder that holds restore points.
-func storeFlag(flags *flag.FlagSet) *string {
-	home, _ := os.UserHomeDir()
-	return flags.String("store", filepath.Join(home, ".hib", "restore-points"), "folder that holds restore points")
 }
 
 // supervise runs the Supervisor for one training process, from start to exit. hib run and hib restore
@@ -97,6 +89,9 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr
 
+	// Ctrl-C reaches the training process too, because it shares the terminal. hib catches the
+	// signal and never reads it, so hib keeps running until the training process exits, and then
+	// exits with that process's code.
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt)
 	defer signal.Stop(interrupts)
@@ -109,11 +104,10 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 	code := childExitCode(child.Wait())
 	sup.ChildExited(code)
 
-	// Close the socket, then give each waiting hib checkpoint a moment to read its answer.
 	listener.Close()
 	select {
 	case <-served:
-	case <-time.After(2 * time.Second):
+	case <-time.After(closeGrace):
 	}
 	return code
 }
