@@ -192,3 +192,19 @@ def test_a_failed_load_leaves_the_trainer_untouched(tmp_path):
 def test_load_of_a_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         app_checkpoint.load(tmp_path / "nope.pt", build_trainer())
+
+
+def test_load_refuses_a_different_batch_size_before_changing_training_state(tmp_path):
+    original = build_trainer(batch_size=4)
+    run(original, 1)
+    app_checkpoint.save(tmp_path / "app.pt", original)
+    trainer = build_trainer(init_seed=9, batch_size=8)
+    before = {name: value.clone() for name, value in trainer.model.state_dict().items()}
+    rng_before = torch.get_rng_state().clone()
+
+    with pytest.raises(ValueError, match="batch size"):
+        app_checkpoint.load(tmp_path / "app.pt", trainer)
+
+    assert trainer.progress.completed_updates == 0
+    assert all(torch.equal(before[name], value) for name, value in trainer.model.state_dict().items())
+    assert torch.equal(rng_before, torch.get_rng_state())

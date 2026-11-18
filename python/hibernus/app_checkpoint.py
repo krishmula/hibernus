@@ -33,7 +33,7 @@ def save(path, trainer):
             "epoch": trainer.progress.epoch,
             "position": trainer.progress.position,
         },
-        "sampler": {"seed": trainer.sampler.seed},
+        "sampler": {"seed": trainer.sampler.seed, "batch_size": trainer.sampler.batch_size},
         "rng": _capture_rng(),
         "dataset_version": trainer.dataset.version,
     }
@@ -51,10 +51,15 @@ def save(path, trainer):
         raise
 
 
-def load(path, trainer):
+def load(path, trainer, *, expected_step=None):
     """Restores `trainer` from `path`. It checks everything first, so a refusal changes nothing."""
     state = torch.load(path, weights_only=False)
     _check(state, trainer)
+    if expected_step is not None and state["progress"]["completed_updates"] != expected_step:
+        raise ValueError(
+            f"{path} holds step {state['progress']['completed_updates']}, "
+            f"but the manifest says step {expected_step}"
+        )
 
     trainer.model.load_state_dict(state["model"])
     trainer.optimizer.load_state_dict(state["optimizer"])
@@ -78,6 +83,8 @@ def _check(state, trainer):
             f"the checkpoint has shuffle seed {state['sampler']['seed']}, "
             f"but the trainer has {trainer.sampler.seed}"
         )
+    if state["sampler"].get("batch_size") != trainer.sampler.batch_size:
+        raise ValueError("the checkpoint and the trainer have a different batch size")
     if (state["scaler"] is None) != (trainer.scaler is None):
         raise ValueError("the checkpoint and the trainer disagree about using a GradScaler")
 

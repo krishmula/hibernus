@@ -132,8 +132,15 @@ def test_initialize_refuses_a_checkpoint_that_disagrees_with_the_manifest_step(t
     app_checkpoint.save(tmp_path / "app.pt", original)
     sup = FakeSupervisor({"initialize": {"resume": {"step": 4, "files": [str(tmp_path / "app.pt")]}}})
 
-    with pytest.raises(RuntimeError, match="step"):
-        sup.hook.initialize(trainer=build_trainer())
+    fresh = build_trainer(init_seed=9)
+    before = {name: value.clone() for name, value in fresh.model.state_dict().items()}
+    rng_before = torch.get_rng_state().clone()
+    with pytest.raises(ValueError, match="step"):
+        sup.hook.initialize(trainer=fresh)
+
+    assert fresh.progress.completed_updates == 0
+    assert all(torch.equal(before[name], value) for name, value in fresh.model.state_dict().items())
+    assert torch.equal(rng_before, torch.get_rng_state())
 
 
 def test_initialize_refuses_a_restore_point_without_app_pt(tmp_path):
@@ -177,3 +184,10 @@ def test_without_a_trainer_the_stand_in_step_file_still_works(tmp_path):
 
     assert json.loads((app / "step.json").read_text()) == {"step": 7}
     assert sup.requests[1]["files"] == [str(app / "step.json")]
+
+
+def test_without_a_supervisor_a_wrong_boundary_step_is_refused(monkeypatch):
+    monkeypatch.delenv("HIB_SOCKET", raising=False)
+    hook = hibernus.connect()
+    with pytest.raises(ValueError, match="step"):
+        hook.boundary(1, trainer=build_trainer())

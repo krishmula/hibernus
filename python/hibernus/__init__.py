@@ -110,11 +110,8 @@ def _load_trainer(files, step, trainer):
 
     for path in files:
         if os.path.basename(path) == APP_FILE:
-            app_checkpoint.load(path, trainer)
-            saved = trainer.progress.completed_updates
-            if saved != step:
-                raise RuntimeError(f"{path} holds step {saved}, but the manifest says step {step}")
-            return saved
+            app_checkpoint.load(path, trainer, expected_step=step)
+            return trainer.progress.completed_updates
     raise RuntimeError(f"the restore point has no {APP_FILE}")
 
 
