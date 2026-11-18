@@ -3,6 +3,7 @@ package supervisor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/krishmula/hibernus/internal/protocol"
@@ -18,6 +19,19 @@ func shortSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "w.sock")
 }
 
+// serve starts a Supervisor on a fresh socket and returns the socket path.
+func serve(t *testing.T, sup *Supervisor) string {
+	t.Helper()
+	path := shortSocketPath(t)
+	listener, err := Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go sup.Serve(listener)
+	return path
+}
+
 func status(t *testing.T, path string) protocol.StatusReply {
 	t.Helper()
 	var reply protocol.StatusReply
@@ -27,37 +41,43 @@ func status(t *testing.T, path string) protocol.StatusReply {
 	return reply
 }
 
-func TestSocketConversation(t *testing.T) {
-	path := shortSocketPath(t)
-	listener, err := Listen(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	sup := New(Config{Workload: "w"}, nil)
-	go sup.Serve(listener)
-
+func TestANewWorkloadIsRunningAtStepZero(t *testing.T) {
+	path := serve(t, New(Config{Workload: "w"}, nil))
 	if got := status(t, path); got.State != "Running" || got.Step != 0 {
-		t.Fatalf("first status = %+v, want Running at step 0", got)
+		t.Fatalf("status = %+v, want Running at step 0", got)
 	}
+}
 
-	var start protocol.StartReply
-	if err := protocol.Send(path, protocol.Request{Op: "start"}, &start); err != nil || start.Resume != nil {
-		t.Fatalf("start = %+v, %v; want no resume", start, err)
+func TestInitializeOnAFreshRunHasNothingToResume(t *testing.T) {
+	path := serve(t, New(Config{Workload: "w"}, nil))
+	var initialize protocol.InitializeReply
+	if err := protocol.Send(path, protocol.Request{Op: "initialize"}, &initialize); err != nil || initialize.Resume != nil {
+		t.Fatalf("initialize = %+v, %v; want no resume", initialize, err)
 	}
+}
 
-	var boundary protocol.BoundaryReply
-	if err := protocol.Send(path, protocol.Request{Op: "boundary", Step: 5}, &boundary); err != nil || boundary.Pause {
-		t.Fatalf("boundary = %+v, %v; want no pause", boundary, err)
+func TestBoundaryRecordsTheStepWithoutPausing(t *testing.T) {
+	path := serve(t, New(Config{Workload: "w"}, nil))
+	if reply := boundary(t, path, 5); reply.Pause {
+		t.Fatalf("boundary with no checkpoint requested = %+v, want no pause", reply)
 	}
 	if got := status(t, path); got.Step != 5 {
 		t.Fatalf("step after boundary = %d, want 5", got.Step)
 	}
+}
 
-	if err := protocol.Send(path, protocol.Request{Op: "dance"}, &boundary); err == nil {
-		t.Fatal("unknown op succeeded, want an error")
+func TestUnknownOpIsRefused(t *testing.T) {
+	path := serve(t, New(Config{Workload: "w"}, nil))
+	var reply protocol.StatusReply
+	err := protocol.Send(path, protocol.Request{Op: "dance"}, &reply)
+	if err == nil || err.Error() != `unknown op "dance"` {
+		t.Fatalf("unknown op = %v, want a refusal", err)
 	}
+}
 
+func TestCleanExitFinishesTheWorkload(t *testing.T) {
+	sup := New(Config{Workload: "w"}, nil)
+	path := serve(t, sup)
 	sup.ChildExited(0)
 	if got := status(t, path); got.State != "Finished" {
 		t.Fatalf("state after a clean exit = %s, want Finished", got.State)
@@ -65,17 +85,13 @@ func TestSocketConversation(t *testing.T) {
 }
 
 func TestListenRefusesALiveSupervisor(t *testing.T) {
-	path := shortSocketPath(t)
-	first, err := Listen(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer first.Close()
-	go New(Config{Workload: "w"}, nil).Serve(first)
-
-	if second, err := Listen(path); err == nil {
+	path := serve(t, New(Config{Workload: "w"}, nil))
+	second, err := Listen(path)
+	if err == nil {
 		second.Close()
-		t.Fatal("a second Listen on a live socket succeeded")
+	}
+	if err == nil || !strings.Contains(err.Error(), "already runs") {
+		t.Fatalf("a second Listen on a live socket = %v, want a refusal", err)
 	}
 }
 

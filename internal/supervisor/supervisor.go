@@ -28,17 +28,18 @@ type Config struct {
 type Supervisor struct {
 	cfg Config
 
-	mu       sync.Mutex
-	state    State
-	step     int
-	resume   *protocol.Resume // what start answers; nil for a fresh run
-	attempt  *attempt         // the latest checkpoint, in progress or finished
-	location string           // the restore point folder, once Checkpointed
-	err      string           // why the workload Failed
+	// mu guards every field below. handle, join, ChildExited, and giveUp take it, and every method
+	// they call runs with it already held.
+	mu      sync.Mutex
+	state   State
+	step    int
+	resume  *protocol.Resume // what initialize answers; nil for a fresh run
+	attempt *attempt         // the latest checkpoint, in progress or finished
+	err     string           // why the workload Failed
 }
 
 // New makes a Supervisor. With resume nil, it starts in Running. With resume set, it starts in
-// Restoring and hands resume to the training hook when the hook asks start.
+// Restoring and hands resume to the training hook when the hook asks initialize.
 func New(cfg Config, resume *protocol.Resume) *Supervisor {
 	s := &Supervisor{cfg: cfg, state: Running}
 	if resume != nil {
@@ -60,7 +61,7 @@ func (s *Supervisor) ChildExited(code int) {
 	s.state = next
 }
 
-// fail moves to Failed and answers every hib checkpoint that waits. The caller holds s.mu.
+// fail moves to Failed and answers every hib checkpoint that waits.
 func (s *Supervisor) fail(reason string) {
 	s.state = Failed
 	s.err = reason
@@ -129,7 +130,7 @@ func (s *Supervisor) serveConn(conn net.Conn) {
 
 // handle answers one message. A nil answer means no reply.
 func (s *Supervisor) handle(req protocol.Request) any {
-	if req.Op == "checkpoint" {
+	if req.Op == protocol.OpCheckpoint {
 		// It waits until the checkpoint ends, so it must not hold the lock while it waits.
 		return s.checkpoint(req.Deadline)
 	}
@@ -138,20 +139,13 @@ func (s *Supervisor) handle(req protocol.Request) any {
 	defer s.mu.Unlock()
 
 	switch req.Op {
-	case "status":
-		reply := protocol.StatusReply{State: string(s.state), Step: s.step}
-		if s.location != "" {
-			reply.Location = &s.location
-		}
-		if s.err != "" {
-			reply.Error = &s.err
-		}
-		return reply
-	case "start":
-		return s.start()
-	case "boundary":
+	case protocol.OpStatus:
+		return s.status()
+	case protocol.OpInitialize:
+		return s.initialize()
+	case protocol.OpBoundary:
 		return s.boundary(req.Step)
-	case "app_checkpoint":
+	case protocol.OpAppCheckpoint:
 		s.appCheckpointWritten(req.Files, req.Error)
 		return nil
 	default:
@@ -159,8 +153,22 @@ func (s *Supervisor) handle(req protocol.Request) any {
 	}
 }
 
-// start answers the training hook's first message: where training begins.
-func (s *Supervisor) start() protocol.StartReply {
+// status copies the fields it reports, because the reply is sent after s.mu is released.
+func (s *Supervisor) status() protocol.StatusReply {
+	reply := protocol.StatusReply{State: string(s.state), Step: s.step}
+	if s.state == Checkpointed {
+		location := s.attempt.root
+		reply.Location = &location
+	}
+	if s.err != "" {
+		reason := s.err
+		reply.Error = &reason
+	}
+	return reply
+}
+
+// initialize answers the training hook's first message: where training begins.
+func (s *Supervisor) initialize() protocol.InitializeReply {
 	if s.state == Restoring {
 		s.state = Running
 		if s.attempt != nil {
@@ -168,7 +176,7 @@ func (s *Supervisor) start() protocol.StartReply {
 			s.state = Checkpointing
 		}
 	}
-	return protocol.StartReply{Resume: s.resume}
+	return protocol.InitializeReply{Resume: s.resume}
 }
 
 func (s *Supervisor) boundary(step int) any {

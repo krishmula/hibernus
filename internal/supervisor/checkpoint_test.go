@@ -13,26 +13,15 @@ import (
 	"github.com/krishmula/hibernus/internal/protocol"
 )
 
-// serve starts a Supervisor on a fresh socket and returns the socket path.
-func serve(t *testing.T, sup *Supervisor) string {
-	t.Helper()
-	path := shortSocketPath(t)
-	listener, err := Listen(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { listener.Close() })
-	go sup.Serve(listener)
-	return path
-}
-
 // requestCheckpoint sends hib checkpoint's request in the background and returns where its answer arrives.
 func requestCheckpoint(t *testing.T, path string, deadline time.Duration) <-chan protocol.CheckpointReply {
 	t.Helper()
 	answer := make(chan protocol.CheckpointReply, 1)
 	go func() {
 		var reply protocol.CheckpointReply
-		protocol.Send(path, protocol.Request{Op: "checkpoint", Deadline: time.Now().Add(deadline)}, &reply)
+		if err := protocol.Send(path, protocol.Request{Op: "checkpoint", Deadline: time.Now().Add(deadline)}, &reply); err != nil {
+			t.Errorf("hib checkpoint: %v", err)
+		}
 		answer <- reply
 	}()
 	return answer
@@ -93,16 +82,34 @@ func writeStepFile(t *testing.T, path, dir string, step int) {
 	tell(t, path, protocol.Request{Op: "app_checkpoint", Files: []string{file}})
 }
 
+// finishCheckpoint does what the training hook does at the first update boundary after a checkpoint
+// request: it pauses and writes the application checkpoint.
+func finishCheckpoint(t *testing.T, path string, step int) {
+	t.Helper()
+	waitForState(t, path, "Checkpointing")
+	reply := boundary(t, path, step)
+	if !reply.Pause {
+		t.Fatalf("boundary in Checkpointing = %+v, want a pause", reply)
+	}
+	writeStepFile(t, path, reply.Dir, step)
+}
+
+// checkpointed returns a Supervisor's socket path after a checkpoint at step 2, and the restore point folder.
+func checkpointed(t *testing.T) (path, root string) {
+	t.Helper()
+	store := t.TempDir()
+	path = serve(t, New(Config{Workload: "w", Store: store}, nil))
+	answer := requestCheckpoint(t, path, 5*time.Second)
+	finishCheckpoint(t, path, 2)
+	receive(t, answer)
+	return path, filepath.Join(store, "w", "step-2")
+}
+
 func TestCheckpointWritesARestorePoint(t *testing.T) {
 	store := t.TempDir()
 	path := serve(t, New(Config{Workload: "w", Store: store}, nil))
-
-	if reply := boundary(t, path, 1); reply.Pause {
-		t.Fatal("paused at step 1 with no checkpoint requested")
-	}
-	first := requestCheckpoint(t, path, 5*time.Second)
+	answer := requestCheckpoint(t, path, 5*time.Second)
 	waitForState(t, path, "Checkpointing")
-	second := requestCheckpoint(t, path, 5*time.Second)
 
 	reply := boundary(t, path, 2)
 	if !reply.Pause || reply.Dir != filepath.Join(store, "w", "step-2", "app") {
@@ -110,15 +117,10 @@ func TestCheckpointWritesARestorePoint(t *testing.T) {
 	}
 	writeStepFile(t, path, reply.Dir, 2)
 
-	answer := receive(t, first)
 	root := filepath.Join(store, "w", "step-2")
-	if !answer.OK || answer.Location != root || answer.Manifest == nil || answer.Manifest.Step != 2 {
-		t.Fatalf("checkpoint = %+v, want ok at %s for step 2", answer, root)
+	if got := receive(t, answer); !got.OK || got.Location != root || got.Manifest == nil || got.Manifest.Step != 2 {
+		t.Fatalf("checkpoint = %+v, want ok at %s for step 2", got, root)
 	}
-	if again := receive(t, second); again.Location != root {
-		t.Fatalf("the second request got %+v, want the same restore point", again)
-	}
-
 	m, err := manifest.Load(root)
 	if err != nil {
 		t.Fatal(err)
@@ -129,13 +131,32 @@ func TestCheckpointWritesARestorePoint(t *testing.T) {
 	if m.Layers.ProcessSnapshot.Status != manifest.StatusFailed {
 		t.Fatalf("process snapshot status = %s, want failed", m.Layers.ProcessSnapshot.Status)
 	}
+}
 
-	got := status(t, path)
-	if got.State != "Checkpointed" || got.Location == nil || *got.Location != root {
+func TestRequestsDuringACheckpointShareItsAnswer(t *testing.T) {
+	path := serve(t, New(Config{Workload: "w", Store: t.TempDir()}, nil))
+	first := requestCheckpoint(t, path, 5*time.Second)
+	waitForState(t, path, "Checkpointing")
+	second := requestCheckpoint(t, path, 5*time.Second)
+	finishCheckpoint(t, path, 2)
+
+	a, b := receive(t, first), receive(t, second)
+	if !a.OK || b.Location != a.Location {
+		t.Fatalf("the two requests got %+v and %+v, want the same restore point", a, b)
+	}
+}
+
+func TestStatusAfterACheckpointReportsTheRestorePoint(t *testing.T) {
+	path, root := checkpointed(t)
+	if got := status(t, path); got.State != "Checkpointed" || got.Location == nil || *got.Location != root {
 		t.Fatalf("status after the checkpoint = %+v, want Checkpointed at %s", got, root)
 	}
-	if late := receive(t, requestCheckpoint(t, path, 5*time.Second)); late.Location != root {
-		t.Fatalf("a request after Checkpointed got %+v, want the same restore point", late)
+}
+
+func TestCheckpointAfterACheckpointReturnsTheSameRestorePoint(t *testing.T) {
+	path, root := checkpointed(t)
+	if late := receive(t, requestCheckpoint(t, path, 5*time.Second)); !late.OK || late.Location != root {
+		t.Fatalf("a request after Checkpointed got %+v, want the restore point at %s", late, root)
 	}
 }
 
@@ -183,15 +204,15 @@ func TestRestoringHandsBackTheStepAndQueuesACheckpoint(t *testing.T) {
 		t.Fatalf("a checkpoint during Restoring moved the state to %s", got.State)
 	}
 
-	var start protocol.StartReply
-	if err := protocol.Send(path, protocol.Request{Op: "start"}, &start); err != nil {
+	var initialize protocol.InitializeReply
+	if err := protocol.Send(path, protocol.Request{Op: "initialize"}, &initialize); err != nil {
 		t.Fatal(err)
 	}
-	if start.Resume == nil || start.Resume.Step != 7 {
-		t.Fatalf("start = %+v, want resume at step 7", start)
+	if initialize.Resume == nil || initialize.Resume.Step != 7 {
+		t.Fatalf("initialize = %+v, want resume at step 7", initialize)
 	}
 	if got := status(t, path); got.State != "Checkpointing" {
-		t.Fatalf("state after start = %s, want the queued checkpoint to begin", got.State)
+		t.Fatalf("state after initialize = %s, want the queued checkpoint to begin", got.State)
 	}
 
 	reply := boundary(t, path, 8)

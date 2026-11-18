@@ -20,8 +20,30 @@ const SocketEnv = "HIB_SOCKET"
 // ErrNoSupervisor means that nothing answers on the socket.
 var ErrNoSupervisor = errors.New("no Supervisor answers")
 
+// Op names what a message to the Supervisor asks for.
+type Op string
+
+const (
+	OpStatus        Op = "status"
+	OpCheckpoint    Op = "checkpoint"
+	OpInitialize    Op = "initialize"
+	OpBoundary      Op = "boundary"
+	OpAppCheckpoint Op = "app_checkpoint"
+)
+
+// Request holds the fields for every message sent to the Supervisor. Op selects
+// the operation; each operation uses only the fields shown in these JSON examples:
+//
+//	{"op":"status"}                                  // hib status
+//	{"op":"checkpoint","deadline":"2026-11-17T18:00:00Z"} // hib checkpoint
+//	{"op":"initialize"}                                   // training hook asks where to begin
+//	{"op":"boundary","step":12}                      // training hook reports an update boundary
+//	{"op":"app_checkpoint","files":["/path/step.json"]} // training hook reports the files it wrote
+//	{"op":"app_checkpoint","error":"disk full"}      // training hook reports a write failure
+//
+// The socket path selects the workload, so requests need no workload name or PID.
 type Request struct {
-	Op       string    `json:"op"`
+	Op       Op        `json:"op"`
 	Step     int       `json:"step,omitempty"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	Files    []string  `json:"files,omitempty"`
@@ -35,7 +57,7 @@ type StatusReply struct {
 	Error    *string `json:"error"`
 }
 
-type StartReply struct {
+type InitializeReply struct {
 	Resume *Resume `json:"resume"`
 }
 
@@ -65,7 +87,9 @@ type Refusal struct {
 	Reason string `json:"refused"`
 }
 
-// RunDir is the folder that holds one socket per running workload.
+// RunDir returns the folder path used for workload sockets. It uses HIB_RUN_DIR
+// when nonempty; otherwise, it uses hib-<user ID> inside the OS temporary folder.
+// It does not create the folder or check whether the folder or sockets exist.
 func RunDir() string {
 	if dir := os.Getenv("HIB_RUN_DIR"); dir != "" {
 		return dir

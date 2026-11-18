@@ -145,7 +145,7 @@ The training hook keeps one connection open for the life of the training process
 
 | When | Hook sends | Supervisor replies |
 |---|---|---|
-| The training process starts | `{"op": "start"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
+| The training process starts | `{"op": "initialize"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
 | Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true, "dir": "..."}` in Checkpointing, where `dir` is the folder for the application checkpoint. A refusal in a final state, so training stops. |
 | After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. The hook waits on the connection, paused. |
 | After a CRIU restore | `{"op": "reconnect", "step": 1200}` | `{"continue": true}` |
@@ -154,7 +154,7 @@ The hook's paused wait ends only when the connection breaks. On the checkpoint h
 
 A Supervisor that can't answer a message, such as one with an unknown `op`, replies `{"refused": "..."}`. The key differs from the `error` field of other replies, so a Failed status never reads as a refusal.
 
-The hook always asks `start` instead of assuming step 0. A fresh training process knows nothing about the earlier run, and only the Supervisor has read the manifest.
+The hook always asks `initialize` instead of assuming step 0. A fresh training process knows nothing about the earlier run, and only the Supervisor has read the manifest.
 
 ## Exit codes
 
@@ -179,7 +179,7 @@ The first build proves the whole path with a fake checkpoint, on macOS, with a t
 | Step | What it adds | Check |
 |---|---|---|
 | 1 | A toy `train.py` loop that calls the training hook after each step. | It prints step numbers on its own. |
-| 2 | `hib run`: the Supervisor, the socket, and the `start` and `boundary` messages. | `hib status` shows Running and the current step. |
+| 2 | `hib run`: the Supervisor, the socket, and the `initialize` and `boundary` messages. | `hib status` shows Running and the current step. |
 | 3 | `hib checkpoint`: pause, the stand-in application checkpoint, and the manifest. | It exits 0 and prints the restore point location. Training stays paused. |
 | 4 | `hib restore <location>`: the fallback path. | Training continues at step K+1. |
 

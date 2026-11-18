@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -16,12 +15,9 @@ const statusUsage = "usage: hib status [--workload <name>]\n"
 func statusCommand(args []string) int {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
 	flags.Usage = func() { fmt.Fprint(os.Stderr, statusUsage) }
-	workload := flags.String("workload", "", "name of the workload")
-	if err := flags.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return exitOK
-		}
-		return exitBadCommand
+	workload := workloadFlag(flags)
+	if code, ok := parseFlags(flags, args); !ok {
+		return code
 	}
 	if flags.NArg() > 0 {
 		fmt.Fprint(os.Stderr, "hib status: unexpected arguments\n"+statusUsage)
@@ -34,7 +30,7 @@ func statusCommand(args []string) int {
 	}
 
 	var reply protocol.StatusReply
-	if err := protocol.Send(protocol.SocketPath(name), protocol.Request{Op: "status"}, &reply); err != nil {
+	if err := protocol.Send(protocol.SocketPath(name), protocol.Request{Op: protocol.OpStatus}, &reply); err != nil {
 		fmt.Fprintf(os.Stderr, "hib status: no Supervisor answers for workload %q: %v\n", name, err)
 		return exitNoSupervisor
 	}
@@ -46,8 +42,8 @@ func statusCommand(args []string) int {
 // running on this host.
 func findWorkload(command, name string) (string, int) {
 	if name != "" {
-		if !validWorkloadName.MatchString(name) {
-			fmt.Fprintf(os.Stderr, "hib %s: workload name %q may only use letters, digits, '.', '_', and '-'\n", command, name)
+		if err := checkWorkloadName(name); err != nil {
+			fmt.Fprintf(os.Stderr, "hib %s: %v\n", command, err)
 			return "", exitBadCommand
 		}
 		return name, exitOK
