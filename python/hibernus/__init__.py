@@ -18,9 +18,9 @@ class Hook:
         self._sock.connect(socket_path)
         self._file = self._sock.makefile("rwb")
 
-    def start(self):
+    def initialize(self):
         """Returns the last finished step: 0 for a fresh run, or K after a restore from step K."""
-        reply = self._send({"op": "start"})
+        reply = self._send({"op": "initialize"})
         resume = reply["resume"]
         if resume is None:
             return 0
@@ -76,7 +76,7 @@ def _load_step(files, step):
 class NoSupervisor:
     """Stands in for Hook when the training process runs without hib, so training runs as usual."""
 
-    def start(self):
+    def initialize(self):
         return 0
 
     def boundary(self, step):

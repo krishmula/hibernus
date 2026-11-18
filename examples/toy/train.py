@@ -13,7 +13,7 @@ def main():
     args = parser.parse_args()
 
     hib = hibernus.connect()
-    step = hib.start()
+    step = hib.initialize()
     while step < args.steps:
         step += 1
         time.sleep(args.step_seconds)

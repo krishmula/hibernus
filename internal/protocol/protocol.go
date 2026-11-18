@@ -26,7 +26,7 @@ type Op string
 const (
 	OpStatus        Op = "status"
 	OpCheckpoint    Op = "checkpoint"
-	OpStart         Op = "start"
+	OpInitialize    Op = "initialize"
 	OpBoundary      Op = "boundary"
 	OpAppCheckpoint Op = "app_checkpoint"
 )
@@ -36,7 +36,7 @@ const (
 //
 //	{"op":"status"}                                  // hib status
 //	{"op":"checkpoint","deadline":"2026-11-17T18:00:00Z"} // hib checkpoint
-//	{"op":"start"}                                   // training hook asks where to begin
+//	{"op":"initialize"}                                   // training hook asks where to begin
 //	{"op":"boundary","step":12}                      // training hook reports an update boundary
 //	{"op":"app_checkpoint","files":["/path/step.json"]} // training hook reports the files it wrote
 //	{"op":"app_checkpoint","error":"disk full"}      // training hook reports a write failure
@@ -57,7 +57,7 @@ type StatusReply struct {
 	Error    *string `json:"error"`
 }
 
-type StartReply struct {
+type InitializeReply struct {
 	Resume *Resume `json:"resume"`
 }
 

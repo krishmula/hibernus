@@ -63,7 +63,7 @@ func (s *Supervisor) join(deadline time.Time) *attempt {
 		s.state = Checkpointing
 		s.startAttempt(deadline)
 	case Restoring:
-		// Queue the checkpoint. start begins it when Restoring ends.
+		// Queue the checkpoint. initialize begins it when Restoring ends.
 		if s.attempt == nil {
 			s.startAttempt(deadline)
 		}

@@ -33,13 +33,13 @@ type Supervisor struct {
 	mu      sync.Mutex
 	state   State
 	step    int
-	resume  *protocol.Resume // what start answers; nil for a fresh run
+	resume  *protocol.Resume // what initialize answers; nil for a fresh run
 	attempt *attempt         // the latest checkpoint, in progress or finished
 	err     string           // why the workload Failed
 }
 
 // New makes a Supervisor. With resume nil, it starts in Running. With resume set, it starts in
-// Restoring and hands resume to the training hook when the hook asks start.
+// Restoring and hands resume to the training hook when the hook asks initialize.
 func New(cfg Config, resume *protocol.Resume) *Supervisor {
 	s := &Supervisor{cfg: cfg, state: Running}
 	if resume != nil {
@@ -141,8 +141,8 @@ func (s *Supervisor) handle(req protocol.Request) any {
 	switch req.Op {
 	case protocol.OpStatus:
 		return s.status()
-	case protocol.OpStart:
-		return s.start()
+	case protocol.OpInitialize:
+		return s.initialize()
 	case protocol.OpBoundary:
 		return s.boundary(req.Step)
 	case protocol.OpAppCheckpoint:
@@ -167,8 +167,8 @@ func (s *Supervisor) status() protocol.StatusReply {
 	return reply
 }
 
-// start answers the training hook's first message: where training begins.
-func (s *Supervisor) start() protocol.StartReply {
+// initialize answers the training hook's first message: where training begins.
+func (s *Supervisor) initialize() protocol.InitializeReply {
 	if s.state == Restoring {
 		s.state = Running
 		if s.attempt != nil {
@@ -176,7 +176,7 @@ func (s *Supervisor) start() protocol.StartReply {
 			s.state = Checkpointing
 		}
 	}
-	return protocol.StartReply{Resume: s.resume}
+	return protocol.InitializeReply{Resume: s.resume}
 }
 
 func (s *Supervisor) boundary(step int) any {

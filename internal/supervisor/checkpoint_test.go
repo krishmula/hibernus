@@ -204,15 +204,15 @@ func TestRestoringHandsBackTheStepAndQueuesACheckpoint(t *testing.T) {
 		t.Fatalf("a checkpoint during Restoring moved the state to %s", got.State)
 	}
 
-	var start protocol.StartReply
-	if err := protocol.Send(path, protocol.Request{Op: "start"}, &start); err != nil {
+	var initialize protocol.InitializeReply
+	if err := protocol.Send(path, protocol.Request{Op: "initialize"}, &initialize); err != nil {
 		t.Fatal(err)
 	}
-	if start.Resume == nil || start.Resume.Step != 7 {
-		t.Fatalf("start = %+v, want resume at step 7", start)
+	if initialize.Resume == nil || initialize.Resume.Step != 7 {
+		t.Fatalf("initialize = %+v, want resume at step 7", initialize)
 	}
 	if got := status(t, path); got.State != "Checkpointing" {
-		t.Fatalf("state after start = %s, want the queued checkpoint to begin", got.State)
+		t.Fatalf("state after initialize = %s, want the queued checkpoint to begin", got.State)
 	}
 
 	reply := boundary(t, path, 8)

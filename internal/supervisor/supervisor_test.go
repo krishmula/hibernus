@@ -48,11 +48,11 @@ func TestANewWorkloadIsRunningAtStepZero(t *testing.T) {
 	}
 }
 
-func TestStartOnAFreshRunHasNothingToResume(t *testing.T) {
+func TestInitializeOnAFreshRunHasNothingToResume(t *testing.T) {
 	path := serve(t, New(Config{Workload: "w"}, nil))
-	var start protocol.StartReply
-	if err := protocol.Send(path, protocol.Request{Op: "start"}, &start); err != nil || start.Resume != nil {
-		t.Fatalf("start = %+v, %v; want no resume", start, err)
+	var initialize protocol.InitializeReply
+	if err := protocol.Send(path, protocol.Request{Op: "initialize"}, &initialize); err != nil || initialize.Resume != nil {
+		t.Fatalf("initialize = %+v, %v; want no resume", initialize, err)
 	}
 }
 
