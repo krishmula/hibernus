@@ -2,7 +2,9 @@
 
 import json
 import os
+import signal
 import socket
+import time
 
 SOCKET_ENV = "HIB_SOCKET"
 
@@ -19,15 +21,19 @@ class Hook:
     def __init__(self, socket_path=None):
         self._sock = None
         self._file = None
+        self._reconnect = None
         if socket_path:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.connect(socket_path)
-            self._attach(sock)
+            self._reconnect = lambda: _open(socket_path)
+            self._attach(self._reconnect())
 
     @classmethod
-    def from_socket(cls, sock):
-        """A hook on a connection that is already open. Tests use it with a fake Supervisor."""
+    def from_socket(cls, sock, reconnect=None):
+        """A hook on a connection that is already open. Tests use it with a fake Supervisor.
+
+        `reconnect` opens a new connection, which a restored hook needs after a process snapshot.
+        """
         hook = cls()
+        hook._reconnect = reconnect
         hook._attach(sock)
         return hook
 
@@ -66,9 +72,12 @@ class Hook:
             return
         reply = self._send({"op": "boundary", "step": step})
         if reply["pause"]:
-            self._checkpoint(step, reply["dir"], trainer)
+            self._checkpoint(step, reply["dir"], trainer, snapshot=reply.get("snapshot", False))
 
-    def _checkpoint(self, step, folder, trainer):
+    def _checkpoint(self, step, folder, trainer, snapshot=False):
+        # CRIU will dump this process, and a restore sends SIGUSR1 to wake it. Take the signal
+        # before reporting, so a wake that comes early can't hit the default action and end us.
+        woken, previous = _on_wake() if snapshot else (None, None)
         try:
             os.makedirs(folder, exist_ok=True)
             if trainer is None:
@@ -80,13 +89,44 @@ class Hook:
 
                 path = os.path.join(folder, APP_FILE)
                 app_checkpoint.save(path, trainer)
+                if snapshot:
+                    # CRIU dumps one process. Stop the DataLoader workers now, after the save, so
+                    # the dump holds no worker processes, shared memory or queues. The restored
+                    # trainer opens new workers at its saved cursor. If this fails, the error
+                    # goes to the Supervisor like a failed save, and no dump follows.
+                    trainer.close_data()
             self._write({"op": "app_checkpoint", "files": [path]})
         except Exception as e:  # tell the Supervisor why, whatever went wrong
             self._write({"op": "app_checkpoint", "error": str(e)})
+            if snapshot:
+                # The Supervisor won't dump after an error, so nothing will wake us. Wait on the
+                # socket, as a hook without a snapshot does.
+                signal.signal(signal.SIGUSR1, previous)
+                snapshot = False
+        if snapshot:
+            self._wait_for_restore(woken, previous)
+            return
         # Stay paused. The Supervisor never answers, so this wait ends only when the connection
         # breaks, which means the host went away.
         self._file.readline()
         raise ConnectionError("the Supervisor went away while training was paused")
+
+    def _wait_for_restore(self, woken, previous):
+        """Closes the socket, sleeps until a restore wakes the process, and reconnects.
+
+        The Supervisor dumps this process once the socket is closed, and ends it. After a restore,
+        this process is back here, and the new Supervisor sends SIGUSR1.
+        """
+        self._file.close()
+        self._sock.close()
+        self._file = self._sock = None
+        while not woken.flag:
+            time.sleep(0.05)  # a signal ends the sleep early, and the handler sets the flag
+        signal.signal(signal.SIGUSR1, previous)
+        if self._reconnect is None:
+            raise ConnectionError("woken after a restore, but the hook has no socket path to reconnect to")
+        self._attach(self._reconnect())
+        self._send({"op": "resumed"})
 
     def _send(self, message):
         self._write(message)
@@ -101,6 +141,30 @@ class Hook:
     def _write(self, message):
         self._file.write(json.dumps(message).encode() + b"\n")
         self._file.flush()
+
+
+def _open(socket_path):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(socket_path)
+    return sock
+
+
+class _Wake:
+    """A flag that SIGUSR1 sets. A plain attribute, not a threading.Event: a signal handler that
+    takes the Event's lock can deadlock against the main thread, which holds it while it waits."""
+
+    def __init__(self):
+        self.flag = False
+
+    def handler(self, *_):
+        self.flag = True
+
+
+def _on_wake():
+    """Starts catching SIGUSR1. Returns the flag the signal sets, and the old handler."""
+    woken = _Wake()
+    previous = signal.signal(signal.SIGUSR1, woken.handler)
+    return woken, previous
 
 
 def _load_step(files, step):

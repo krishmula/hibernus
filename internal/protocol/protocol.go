@@ -46,9 +46,20 @@ type Resume struct {
 
 // BoundaryReply tells the training hook whether to pause. With Pause set, Dir is the folder where
 // the hook writes the application checkpoint.
+//
+// With Snapshot set, the Supervisor will dump the process after the hook writes the application
+// checkpoint. The hook closes its socket, because CRIU can't restore a connection to a process
+// outside the dump, and waits for the SIGUSR1 that a restore sends. It then reconnects and sends
+// "resumed".
 type BoundaryReply struct {
-	Pause bool   `json:"pause"`
-	Dir   string `json:"dir,omitempty"`
+	Pause    bool   `json:"pause"`
+	Dir      string `json:"dir,omitempty"`
+	Snapshot bool   `json:"snapshot,omitempty"`
+}
+
+// ResumedReply answers "resumed", the message a restored training hook sends once it has reconnected.
+type ResumedReply struct {
+	OK bool `json:"ok"`
 }
 
 type CheckpointReply struct {
