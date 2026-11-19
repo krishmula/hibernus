@@ -112,7 +112,7 @@ v1 targets one training workload on one NVIDIA GPU. The requirements in section 
 ### Open scope questions
 
 - **Inference workloads.** Does v1 cover batch inference too? A disrupted batch inference workload loses its in-flight items and pays its startup cost again.
-- **DataLoader child processes.** Does v1 support `num_workers > 0`? If so, the process snapshot has to capture those processes.
+- **DataLoader child processes.** Decided: v1 supports `num_workers > 0`, by closing the workers before the process snapshot. See [DataLoader worker processes](#dataloader-worker-processes).
 
 ## 4. Requirements
 
@@ -216,6 +216,72 @@ flowchart TD
     F --> R
     R --> M["Report the restore time and which layer was used"]
 ```
+
+### Failure path
+
+The checkpoint path and the restore path each have failure branches. The supervisor owns every retry. The disruption handler runs `hib checkpoint` once, with a deadline, and gets one final answer.
+
+```mermaid
+flowchart TD
+    S["Checkpointing: layers written, upload and verify"] --> U{"Every file in S3 verified?"}
+    U -->|yes| M["Write the manifest last"]
+    M --> OK["Checkpointed: exit 0, reply with location, step, time"]
+    U -->|"no, error a retry can fix"| R{"Deadline left?"}
+    R -->|yes| S
+    R -->|"no, gives up a few seconds early"| L{"At least one layer verified?"}
+    U -->|"no, error a retry can't fix"| L
+    L -->|yes| P["Write the manifest, mark the failed layer with its error"]
+    P --> OK
+    L -->|no| F["Failed: no manifest, exit 1"]
+    T["Training process dies mid-checkpoint"] --> F
+```
+
+- **A half-finished upload is invisible.** The manifest is written last. A folder with no manifest is not a restore point, and `hib restore` refuses it (N4).
+- **One bad layer doesn't fail the checkpoint.** If the process snapshot fails but the application checkpoint verifies, the manifest records `process_snapshot: failed` with the error. The state still becomes Checkpointed, and a restore uses the fallback (N3).
+- **Failed is final.** The handler gets exit code 1 and raises an alarm. The workload loses the progress since it started or was last restored. The supervisor stays alive, so a repeated `hib checkpoint` gets the same answer.
+- **Restore failures.** A manifest check, a size or checksum mismatch, or a fingerprint mismatch makes `hib restore` refuse before anything starts, with exit code 1. If CRIU fails, the supervisor stops the partial process and falls back to the application checkpoint. If that fails too, the workload goes to Failed.
+- **Open question.** If only the process snapshot verifies and the application checkpoint failed, the checkpoint is Checkpointed but has no fallback. Decide whether v1 accepts that or treats it as Failed.
+
+### DataLoader worker processes
+
+A DataLoader with `num_workers > 0` starts worker processes that build batches ahead of training. Two things change compared with `num_workers = 0`. Each worker has its own random number generator, in another process, and a process snapshot would have to dump the workers too.
+
+**Rules for the training code.** Exact resume holds only if all of these are true:
+
+- Every random choice in the dataset, such as noise, crops, and flips, comes from a generator built from `(seed, epoch, sample index)`. It never comes from a generator that keeps running.
+- The sample order depends only on a seed, the epoch, and the cursor.
+- Workers never use CUDA.
+
+Hibernus saves no worker state. After a restore, the cursor (epoch and next batch) is enough, because the order, the sample indexes, and the augmentation are all recomputed. Prefetched batches are discarded and built again. Both layers give the same result for the same reason, so the fallback is exact too.
+
+**Way B, the default: close the workers before the process snapshot.**
+
+1. The hook writes the application checkpoint.
+2. If the supervisor asked for a process snapshot, the hook stops the workers, and then reports to the supervisor.
+3. CRIU dumps one process, with no worker processes, shared memory, or queues in the dump.
+4. After a restore, the next update opens new workers at the saved cursor.
+
+The cost is the worker start time after each restore. It counts toward the restore time that Hibernus reports.
+
+**Checked on Linux** (WSL2, kernel 5.15, CRIU 4.3, root, CPU only, 2 workers, the toy classifier with augmentation). A checkpoint taken in the middle of an epoch, with both workers running, produced a process snapshot with one process in it. `hib restore` brought it back from that snapshot, and the 60 step losses matched an uninterrupted run with no workers, with no step repeated or missing. A checkpoint exactly at an epoch end also worked, but it proves less, because the workers had already stopped.
+
+**Way A, a later optimization: dump the workers with the process.** The workers come back already running, so a restore skips their start time. It is not the default because of four risks:
+
+- **It fails today, as the handshake works.** A worker started by fork inherits the hook's connection to the supervisor, and closing the hook's end does not close the connection while a worker holds a copy. The supervisor treats that close as "ready to dump". With 2 workers running on Linux, the close never arrived, the dump never started, and the checkpoint failed at its deadline. The process was waiting correctly, and the supervisor was waiting for a close that could not come. Way A would need a different signal, such as an explicit "ready" message.
+- Nobody has shown that CRIU restores a DataLoader's shared memory, pipes, and queues.
+- The image also holds whatever the workers hold, such as prefetched batches.
+- If CRIU fails, the fallback has no worker state, so exact resume still depends on the rules above.
+
+Switch to Way A only if measurement shows that worker start time is a large share of the restore time, and CRIU restores the worker tree on the target host.
+
+**Still to measure on the G5:** worker start time per DataLoader iterator, with the real dataset. Two early numbers, both with 2 workers and the toy dataset, on one laptop:
+
+| Where | Workers start by | Time to open the iterator and read the first update |
+|---|---|---|
+| Windows | spawn | about 4.5 s |
+| Linux (WSL2) | fork | 0.04 to 0.12 s |
+
+The G5 will start workers by fork, but a real dataset that loads files in each worker will take longer than the toy one. After the workers are closed, the Linux check found no leftover child processes.
 
 ### What the restore host must provide
 

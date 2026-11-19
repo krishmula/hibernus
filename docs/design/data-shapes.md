@@ -146,11 +146,13 @@ The training hook keeps one connection open for the life of the training process
 | When | Hook sends | Supervisor replies |
 |---|---|---|
 | The training process starts | `{"op": "start"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
-| Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true, "dir": "..."}` in Checkpointing, where `dir` is the folder for the application checkpoint. A refusal in a final state, so training stops. |
-| After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. The hook waits on the connection, paused. |
-| After a CRIU restore | `{"op": "reconnect", "step": 1200}` | `{"continue": true}` |
+| Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true, "dir": "...", "snapshot": true}` in Checkpointing, where `dir` is the folder for the application checkpoint, and `snapshot` is present when the Supervisor will take a process snapshot. A refusal in a final state, so training stops. |
+| After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. Without `snapshot`, the hook waits on the connection, paused. With `snapshot`, the hook closes the connection, and the Supervisor dumps the process when it sees the connection close. |
+| After a CRIU restore | `{"op": "resumed"}`, on a new connection | `{"ok": true}` |
 
-The hook's paused wait ends only when the connection breaks. On the checkpoint host, that happens when the host goes away. After a CRIU restore, the training process comes back still waiting on the dead connection, so the hook sees the break, connects to the new Supervisor, and sends `reconnect`.
+Without a process snapshot, the hook's paused wait ends only when the connection breaks, which on the checkpoint host happens when the host goes away.
+
+With a process snapshot, the hook can't keep the connection open, because CRIU can't restore a connection to a Supervisor outside the dump. So the hook takes SIGUSR1 first, reports, closes the connection, and sleeps. The Supervisor starts `criu dump` once it sees that close, which ends the training process. After `criu restore`, the new Supervisor reads the restored root's PID from CRIU's pid file and sends it SIGUSR1. The hook wakes, connects to the socket named by `HIB_SOCKET`, sends `resumed`, and training continues at the next step. If the dump fails, the checkpoint still succeeds from the application checkpoint, and the manifest records why the process snapshot failed. If the restored hook doesn't send `resumed` within 60 seconds, or CRIU fails, or an image fails its checksum, `hib restore` falls back to the application checkpoint.
 
 A Supervisor that can't answer a message, such as one with an unknown `op`, replies `{"refused": "..."}`. The key differs from the `error` field of other replies, so a Failed status never reads as a refusal.
 

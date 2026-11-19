@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,15 +10,17 @@ import (
 
 	"github.com/krishmula/hibernus/internal/manifest"
 	"github.com/krishmula/hibernus/internal/protocol"
+	"github.com/krishmula/hibernus/internal/snapshot"
 	"github.com/krishmula/hibernus/internal/supervisor"
 )
 
-const restoreUsage = "usage: hib restore [--store <folder>] <location>\n"
+const restoreUsage = "usage: hib restore [--store <folder>] [--no-snapshot] <folder | s3://<bucket>/<workload>/step-<K>/ | s3://<bucket>/<workload>/>\n"
 
 func restoreCommand(args []string) int {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
 	flags.Usage = func() { fmt.Fprint(os.Stderr, restoreUsage) }
 	store := storeFlag(flags)
+	noSnapshot := flags.Bool("no-snapshot", false, "restore from the application checkpoint only")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -29,12 +32,14 @@ func restoreCommand(args []string) int {
 		return exitBadCommand
 	}
 
-	root, err := filepath.Abs(flags.Arg(0))
+	storeDir, err := filepath.Abs(*store)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
 	}
-	storeDir, err := filepath.Abs(*store)
+	// An s3:// location is downloaded and verified into the store folder first. After that, a
+	// restore from S3 is a restore from a local folder.
+	root, remote, err := locateRestorePoint(context.Background(), flags.Arg(0), storeDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
@@ -50,7 +55,18 @@ func restoreCommand(args []string) int {
 		return exitFailed
 	}
 
-	return supervise(supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command}, resume)
+	cfg := supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command, TreeLog: treeLogPath(m.Workload), Remote: remote}
+	if !*noSnapshot && m.Layers.ProcessSnapshot.Status == manifest.StatusOK {
+		// The process snapshot comes first. The restored workload can be checkpointed again the
+		// same way, so the Supervisor keeps the snapshotter.
+		cfg.Snapshotter = &snapshot.Criu{}
+		code, ok, reason := restoreFromSnapshot(cfg, resume, root, m)
+		if ok {
+			return code
+		}
+		fmt.Fprintf(os.Stderr, "hib restore: the process snapshot did not restore, so restoring from the application checkpoint instead: %v\n", reason)
+	}
+	return supervise(cfg, resume)
 }
 
 // fallback checks that the application checkpoint can bring the workload back in a fresh training
