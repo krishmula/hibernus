@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/krishmula/hibernus/internal/manifest"
 	"github.com/krishmula/hibernus/internal/protocol"
@@ -49,6 +53,10 @@ func restoreCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
 	}
+	if err := checkFingerprint(context.Background(), m); err != nil {
+		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
+		return exitFailed
+	}
 
 	return supervise(supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command, Remote: remote}, resume)
 }
@@ -59,9 +67,6 @@ func restoreCommand(args []string) int {
 func resumeFromApplicationCheckpoint(root string, m manifest.Manifest) (*protocol.Resume, error) {
 	if !validWorkloadName.MatchString(m.Workload) {
 		return nil, fmt.Errorf("the manifest names workload %q, which is not a valid name", m.Workload)
-	}
-	if len(m.Fingerprint) > 0 {
-		return nil, errors.New("the manifest has a fingerprint, and checking one is not built yet")
 	}
 	if len(m.Command.Argv) == 0 {
 		return nil, errors.New("the manifest has no command to start the training process")
@@ -83,4 +88,40 @@ func resumeFromApplicationCheckpoint(root string, m manifest.Manifest) (*protoco
 		files[i] = filepath.Join(root, file.Path)
 	}
 	return &protocol.Resume{Step: m.Step, Files: files}, nil
+}
+
+// probeTimeout bounds the fingerprint module, which loads PyTorch and can take a while on a cold disk.
+const probeTimeout = 2 * time.Minute
+
+// checkFingerprint runs the fingerprint module with the interpreter the manifest records, the same
+// module the training hook ran on the checkpoint host, and refuses this host if any value differs.
+// It runs before the training process starts, so a refusal leaves nothing to clean up.
+func checkFingerprint(ctx context.Context, m manifest.Manifest) error {
+	if err := m.Fingerprint.Complete(); err != nil {
+		return fmt.Errorf("the manifest: %w", err)
+	}
+	if m.Python == "" {
+		return errors.New("the manifest names no python to collect this host's fingerprint with")
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	probe := exec.CommandContext(ctx, m.Python, "-m", "hibernus.fingerprint")
+	probe.Dir = m.Command.Cwd
+	var stderr strings.Builder
+	probe.Stderr = &stderr
+	out, err := probe.Output()
+	if err != nil {
+		return fmt.Errorf("collect this host's fingerprint with %s: %v: %s", m.Python, err, strings.TrimSpace(stderr.String()))
+	}
+	var here manifest.Fingerprint
+	if err := json.Unmarshal(out, &here); err != nil {
+		return fmt.Errorf("read this host's fingerprint from %s: %v", m.Python, err)
+	}
+	if err := here.Complete(); err != nil {
+		return fmt.Errorf("this host: %w", err)
+	}
+	if diffs := manifest.Differences(m.Fingerprint, here); len(diffs) > 0 {
+		return fmt.Errorf("this host's fingerprint differs from the checkpoint host's, so the restore would not match:\n  %s", strings.Join(diffs, "\n  "))
+	}
+	return nil
 }

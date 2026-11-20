@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,26 @@ func TestCheckpointWritesARestorePoint(t *testing.T) {
 	}
 }
 
+func TestTheManifestRecordsTheFingerprintFromInitialize(t *testing.T) {
+	_, root := checkpointed(t)
+	m, err := manifest.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Fingerprint != checkpointHost || m.Python != testPython {
+		t.Fatalf("manifest fingerprint = %+v, python = %q; want %+v and %q", m.Fingerprint, m.Python, checkpointHost, testPython)
+	}
+}
+
+func TestACheckpointBeforeInitializeFails(t *testing.T) {
+	path := serveWithoutInitialize(t, New(Config{Workload: "w", Store: t.TempDir()}, nil))
+	answer := requestCheckpoint(t, path, 5*time.Second)
+	finishCheckpoint(t, path, 2)
+	if got := receive(t, answer); got.OK || !strings.Contains(got.Error, "fingerprint is unknown") {
+		t.Fatalf("checkpoint before initialize = %+v, want a failure about the fingerprint", got)
+	}
+}
+
 func TestRequestsDuringACheckpointShareItsAnswer(t *testing.T) {
 	path := serve(t, New(Config{Workload: "w", Store: t.TempDir()}, nil))
 	first := requestCheckpoint(t, path, 5*time.Second)
@@ -204,12 +225,8 @@ func TestRestoringHandsBackTheStepAndQueuesACheckpoint(t *testing.T) {
 		t.Fatalf("a checkpoint during Restoring moved the state to %s", got.State)
 	}
 
-	var initialize protocol.InitializeReply
-	if err := protocol.Send(path, protocol.Request{Op: "initialize"}, &initialize); err != nil {
-		t.Fatal(err)
-	}
-	if initialize.Resume == nil || initialize.Resume.Step != 7 {
-		t.Fatalf("initialize = %+v, want resume at step 7", initialize)
+	if reply := initialize(t, path); reply.Resume == nil || reply.Resume.Step != 7 {
+		t.Fatalf("initialize = %+v, want resume at step 7", reply)
 	}
 	if got := status(t, path); got.State != "Checkpointing" {
 		t.Fatalf("state after initialize = %s, want the queued checkpoint to begin", got.State)

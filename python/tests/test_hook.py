@@ -6,13 +6,14 @@ messages (see docs/design/data-shapes.md).
 
 import json
 import socket
+import sys
 import threading
 
 import pytest
 import torch
 
 import hibernus
-from hibernus import app_checkpoint
+from hibernus import app_checkpoint, fingerprint
 from hibernus.workload import build_trainer
 
 
@@ -147,6 +148,15 @@ def test_a_fresh_initialize_leaves_the_trainer_alone():
 
     assert sup.hook.initialize({"trainer": trainer}) == 0
     assert trainer.progress.completed_updates == 0
+
+
+def test_initialize_sends_the_fingerprint_and_the_interpreter():
+    sup = FakeSupervisor({"initialize": {"resume": None}})
+    sup.hook.initialize()
+
+    request = sup.requests[0]
+    assert request["fingerprint"] == fingerprint.collect()
+    assert request["python"] == sys.executable
 
 
 def test_without_a_supervisor_a_trainer_trains_normally(monkeypatch):

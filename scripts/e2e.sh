@@ -63,7 +63,14 @@ grep -q checksum "$work/out" || fail "the damaged restore point failed for anoth
 mkdir "$work/empty"
 expect_exit 1 "$hib" restore --store "$store" "$work/empty"
 
-# 6. Restore. Training continues at step K+1 and runs to the end.
+# 6. hib restore refuses a restore point from a host with another driver, before training starts.
+cp -R "$location" "$work/other-driver"
+sed -i.orig 's/"driver": "[^"]*"/"driver": "999.99"/' "$work/other-driver/manifest.json"
+expect_exit 1 "$hib" restore --store "$store" "$work/other-driver"
+grep -q 'driver: checkpoint host 999.99' "$work/out" || fail "the other-driver restore point failed for another reason: $(cat "$work/out")"
+grep -q '^step ' "$work/out" && fail "training started on a host whose fingerprint differs"
+
+# 7. Restore. Training continues at step K+1 and runs to the end.
 "$hib" restore --store "$store" "$location" >"$work/restore.log" || fail "hib restore exited $?: $(cat "$work/restore.log")"
 [ "$(head -1 "$work/restore.log")" = "step $((k + 1))" ] || fail "restore began at '$(head -1 "$work/restore.log")', want 'step $((k + 1))'"
 [ "$(tail -1 "$work/restore.log")" = "step $steps" ] || fail "restore ended at '$(tail -1 "$work/restore.log")', want 'step $steps'"

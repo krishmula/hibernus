@@ -10,24 +10,72 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 const (
 	FileName      = "manifest.json"
-	SchemaVersion = 1
+	SchemaVersion = 2
 	StatusOK      = "ok"
 	StatusFailed  = "failed"
 )
 
 type Manifest struct {
-	SchemaVersion int               `json:"schema_version"`
-	Workload      string            `json:"workload"`
-	Step          int               `json:"step"`
-	CreatedAt     time.Time         `json:"created_at"`
-	Fingerprint   map[string]string `json:"fingerprint"`
-	Command       Command           `json:"command"`
-	Layers        Layers            `json:"layers"`
+	SchemaVersion int         `json:"schema_version"`
+	Workload      string      `json:"workload"`
+	Step          int         `json:"step"`
+	CreatedAt     time.Time   `json:"created_at"`
+	Fingerprint   Fingerprint `json:"fingerprint"`
+	Python        string      `json:"python"` // the interpreter that collects the fingerprint on a restore host
+	Command       Command     `json:"command"`
+	Layers        Layers      `json:"layers"`
+}
+
+// Fingerprint describes a host and the Python environment of its training process. A restore runs only
+// on a host whose fingerprint equals the checkpoint host's. The training hook's fingerprint module
+// collects it, and writes "none" for a value the host lacks, such as the driver on a host without a GPU.
+type Fingerprint struct {
+	GPU     string `json:"gpu"`
+	Driver  string `json:"driver"`
+	CUDA    string `json:"cuda"`
+	CuDNN   string `json:"cudnn"`
+	PyTorch string `json:"pytorch"`
+	Kernel  string `json:"kernel"`
+}
+
+func (f Fingerprint) fields() [][2]string {
+	return [][2]string{
+		{"gpu", f.GPU}, {"driver", f.Driver}, {"cuda", f.CUDA},
+		{"cudnn", f.CuDNN}, {"pytorch", f.PyTorch}, {"kernel", f.Kernel},
+	}
+}
+
+// Complete refuses a fingerprint with an empty value, which means the collector skipped it.
+func (f Fingerprint) Complete() error {
+	var missing []string
+	for _, field := range f.fields() {
+		if field[1] == "" {
+			missing = append(missing, field[0])
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the fingerprint has no %s", strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Differences lists each value that differs between the recorded fingerprint and this host's, such as
+// `driver: checkpoint host 550.54.15, this host 535.183.01`. An empty list means they match.
+func Differences(recorded, here Fingerprint) []string {
+	var diffs []string
+	theirs, ours := recorded.fields(), here.fields()
+	for i := range theirs {
+		if theirs[i][1] != ours[i][1] {
+			diffs = append(diffs, fmt.Sprintf("%s: checkpoint host %s, this host %s", theirs[i][0], theirs[i][1], ours[i][1]))
+		}
+	}
+	return diffs
 }
 
 // Command is how to start a fresh training process when a restore falls back to the application checkpoint.
