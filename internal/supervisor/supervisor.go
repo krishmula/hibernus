@@ -45,11 +45,18 @@ type Supervisor struct {
 	state     State
 	step      int
 	resume    *protocol.Resume // what initialize answers; nil for a fresh run
+	host      *host            // what initialize reported, recorded in each manifest; nil before initialize
 	attempt   *attempt         // the latest checkpoint, in progress or finished
 	err       string           // why the workload Failed
 	uploading bool             // the restore point is being published; the training process may already be gone
 
 	work sync.WaitGroup // uploads in flight, so hib run doesn't exit under one
+}
+
+// host is the checkpoint host's fingerprint and the interpreter that collected it.
+type host struct {
+	fingerprint manifest.Fingerprint
+	python      string
 }
 
 // New makes a Supervisor. With resume nil, it starts in Running. With resume set, it starts in
@@ -165,7 +172,7 @@ func (s *Supervisor) handle(req protocol.Request) any {
 	case protocol.OpStatus:
 		return s.status()
 	case protocol.OpInitialize:
-		return s.initialize()
+		return s.initialize(req.Fingerprint, req.Python)
 	case protocol.OpBoundary:
 		return s.boundary(req.Step)
 	case protocol.OpAppCheckpoint:
@@ -190,8 +197,17 @@ func (s *Supervisor) status() protocol.StatusReply {
 	return reply
 }
 
-// initialize answers the training hook's first message: where training begins.
-func (s *Supervisor) initialize() protocol.InitializeReply {
+// initialize answers the training hook's first message: where training begins. It keeps the
+// fingerprint the hook sends, for the manifests of later checkpoints. hib restore has already
+// compared this host's fingerprint with the restore point's before it started the training process.
+func (s *Supervisor) initialize(fingerprint *manifest.Fingerprint, python string) any {
+	if fingerprint == nil || python == "" {
+		return protocol.Refusal{Reason: "initialize carries no fingerprint and python; update the training hook"}
+	}
+	if err := fingerprint.Complete(); err != nil {
+		return protocol.Refusal{Reason: err.Error()}
+	}
+	s.host = &host{fingerprint: *fingerprint, python: python}
 	if s.state == Restoring {
 		s.state = Running
 		if s.attempt != nil {

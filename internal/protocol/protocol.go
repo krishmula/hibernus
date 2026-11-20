@@ -36,7 +36,7 @@ const (
 //
 //	{"op":"status"}                                  // hib status
 //	{"op":"checkpoint","deadline":"2026-11-17T18:00:00Z"} // hib checkpoint
-//	{"op":"initialize"}                                   // training hook asks where to begin
+//	{"op":"initialize","fingerprint":{...},"python":"/venv/bin/python"} // training hook asks where to begin
 //	{"op":"boundary","step":12}                      // training hook reports an update boundary
 //	{"op":"app_checkpoint","files":["/path/step.json"]} // training hook reports the files it wrote
 //	{"op":"app_checkpoint","error":"disk full"}      // training hook reports a write failure
@@ -48,6 +48,10 @@ type Request struct {
 	Deadline time.Time `json:"deadline,omitzero"`
 	Files    []string  `json:"files,omitempty"`
 	Error    string    `json:"error,omitempty"`
+
+	// Initialize carries the fingerprint of the checkpoint host and the interpreter that collected it.
+	Fingerprint *manifest.Fingerprint `json:"fingerprint,omitempty"`
+	Python      string                `json:"python,omitempty"`
 }
 
 type StatusReply struct {

@@ -71,10 +71,34 @@ func TestLoadRefusesAFolderWithoutAManifest(t *testing.T) {
 
 func TestLoadRefusesAnotherSchemaVersion(t *testing.T) {
 	root := t.TempDir()
-	if err := Write(root, Manifest{SchemaVersion: 2}); err != nil {
+	if err := Write(root, Manifest{SchemaVersion: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "schema_version 2") {
-		t.Fatalf("Load of schema_version 2 = %v, want a schema version error", err)
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "schema_version 1") {
+		t.Fatalf("Load of schema_version 1 = %v, want a schema version error", err)
+	}
+}
+
+func TestDifferencesNamesEachValueThatDiffers(t *testing.T) {
+	recorded := Fingerprint{GPU: "NVIDIA A10G", Driver: "550.54.15", CUDA: "12.4", CuDNN: "90100", PyTorch: "2.5.1", Kernel: "6.8.0"}
+	if diffs := Differences(recorded, recorded); len(diffs) != 0 {
+		t.Fatalf("Differences of equal fingerprints = %v, want none", diffs)
+	}
+	here := recorded
+	here.Driver = "535.183.01"
+	here.Kernel = "6.5.0"
+	want := []string{
+		"driver: checkpoint host 550.54.15, this host 535.183.01",
+		"kernel: checkpoint host 6.8.0, this host 6.5.0",
+	}
+	if diffs := Differences(recorded, here); strings.Join(diffs, "|") != strings.Join(want, "|") {
+		t.Fatalf("Differences = %q, want %q", diffs, want)
+	}
+}
+
+func TestCompleteNamesEachMissingValue(t *testing.T) {
+	err := Fingerprint{GPU: "none", Driver: "none", CUDA: "none", PyTorch: "none"}.Complete()
+	if err == nil || err.Error() != "the fingerprint has no cudnn, kernel" {
+		t.Fatalf("Complete = %v, want it to name cudnn and kernel", err)
 	}
 }

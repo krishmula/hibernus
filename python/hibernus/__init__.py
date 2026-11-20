@@ -3,6 +3,9 @@
 import json
 import os
 import socket
+import sys
+
+from hibernus import fingerprint
 
 SOCKET_ENV = "HIB_SOCKET"
 
@@ -43,7 +46,8 @@ class Hook:
         `config` holds plain values that must not change across a restore, such as the shuffle
         seed and batch size. A restore whose config differs is refused before anything changes.
         """
-        reply = self._send({"op": "initialize"})
+        # The interpreter lets hib restore collect the restore host's fingerprint the same way.
+        reply = self._send({"op": "initialize", "fingerprint": fingerprint.collect(), "python": sys.executable})
         resume = reply["resume"]
         if resume is None:
             return 0

@@ -234,6 +234,9 @@ func publishWithRetry(ctx context.Context, st store.Store, root, attempt string)
 }
 
 func (s *Supervisor) writeManifest(root string, written []string) (manifest.Manifest, error) {
+	if s.host == nil {
+		return manifest.Manifest{}, errors.New("the training hook never sent initialize, so the fingerprint is unknown")
+	}
 	paths := make([]string, len(written))
 	for i, path := range written {
 		relative, err := filepath.Rel(root, path)
@@ -253,7 +256,8 @@ func (s *Supervisor) writeManifest(root string, written []string) (manifest.Mani
 		Workload:      s.cfg.Workload,
 		Step:          s.step,
 		CreatedAt:     time.Now().UTC().Truncate(time.Second),
-		Fingerprint:   map[string]string{},
+		Fingerprint:   s.host.fingerprint,
+		Python:        s.host.python,
 		Command:       s.cfg.Command,
 		Layers: manifest.Layers{
 			ProcessSnapshot:       manifest.Layer{Status: manifest.StatusFailed, Error: &notBuilt, Files: []manifest.File{}},

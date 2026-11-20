@@ -66,15 +66,15 @@ A restore point is one folder in S3. It holds the process snapshot files, the ap
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "workload": "demo",
   "step": 1200,
   "created_at": "2026-11-16T10:01:12Z",
   "fingerprint": {
-    "gpu": "NVIDIA A10G",
-    "driver": "...", "cuda": "...", "cudnn": "...",
-    "pytorch": "...", "kernel": "..."
+    "gpu": "NVIDIA A10G", "driver": "550.54.15", "cuda": "12.4",
+    "cudnn": "90100", "pytorch": "2.5.1", "kernel": "6.8.0-1015-aws"
   },
+  "python": "/home/ubuntu/run/.venv/bin/python",
   "command": {
     "argv": ["python", "train.py", "--lr", "3e-4"],
     "cwd": "/home/ubuntu/run",
@@ -102,7 +102,8 @@ A restore point is one folder in S3. It holds the process snapshot files, the ap
 | `schema_version` | To read old and new manifests correctly after the format changes. |
 | `workload`, `step` | To say what it brings back, and to check that training continues at `step` + 1. |
 | `created_at` | For people and tools that pick between several restore points. |
-| `fingerprint` | To refuse a restore host whose fingerprint doesn't match. |
+| `fingerprint` | To refuse a restore host whose fingerprint doesn't match. A value the host lacks is `"none"`, such as the driver on a host without a GPU. |
+| `python` | To collect the restore host's fingerprint with the same Python environment the training process uses. |
 | `command` | To start a fresh training process when it falls back to the application checkpoint. |
 | `layers` | To know which layers to try, and to skip a failed layer. `error` says why it failed. |
 | `files` | To find each file, and to catch a missing or cut-short file before loading it. |
@@ -116,9 +117,18 @@ The model weights and optimizer state are not in the manifest. They are files of
 3. `hib restore` checks the size and checksum of each file before it uses that layer.
 4. `hib restore` compares the restore host's fingerprint with `fingerprint`, and refuses on a mismatch.
 
+### Fingerprint
+
+One Python module, `hibernus.fingerprint`, collects the fingerprint on both hosts, so the two always come out in the same format.
+
+1. On the checkpoint host, the training hook collects it when the training process starts, and sends it with its interpreter path in `initialize`. The Supervisor keeps both and writes them into every manifest. The values can't change while the training process runs, so the Supervisor never collects them again.
+2. On the restore host, `hib restore` runs `<python> -m hibernus.fingerprint` before it starts anything. Every value must match exactly. On a mismatch, it lists each value that differs and exits 1.
+
+The module reads the GPU model and driver version from the NVIDIA driver's files in `/proc/driver/nvidia`, not through CUDA, so it never starts CUDA in the training process. It reads the CUDA, cuDNN, and PyTorch versions from the installed PyTorch.
+
 ### First build
 
-The fake checkpoint writes a stand-in application checkpoint: one file, `app/step.json`, that holds only the step. The process snapshot is `"status": "failed"` with the error `"not built yet"`. `fingerprint` stays empty, and `hib restore` skips that check. So the first build exercises the fallback path: `hib restore` starts a fresh training process from `command`, and that process reads the step from the file.
+The fake checkpoint writes a stand-in application checkpoint: one file, `app/step.json`, that holds only the step. The process snapshot is `"status": "failed"` with the error `"not built yet"`. So the first build exercises the fallback path: `hib restore` starts a fresh training process from `command`, and that process reads the step from the file.
 
 ### Open questions
 
@@ -145,7 +155,7 @@ The training hook keeps one connection open for the life of the training process
 
 | When | Hook sends | Supervisor replies |
 |---|---|---|
-| The training process starts | `{"op": "initialize"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
+| The training process starts | `{"op": "initialize", "fingerprint": {...}, "python": "/path/to/python"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
 | Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true, "dir": "..."}` in Checkpointing, where `dir` is the folder for the application checkpoint. A refusal in a final state, so training stops. |
 | After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. The hook waits on the connection, paused. |
 | After a CRIU restore | `{"op": "reconnect", "step": 1200}` | `{"continue": true}` |

@@ -2,7 +2,7 @@
 
 Hibernus lets a training workload resume after a disruption. A Supervisor runs the training process. When a disruption handler runs `hib checkpoint`, the training hook finishes the current update and pauses before reading the next batch. The Supervisor prints the path to the resulting restore point. A launcher can then run `hib restore` to continue from the next update.
 
-The current implementation writes an application checkpoint to a filesystem directory. Restore verifies the files against the manifest and starts a fresh training process with the recorded command. The design also describes a GPU process snapshot and host fingerprint checks. Both are planned.
+The current implementation writes an application checkpoint to a filesystem directory. Restore verifies the files against the manifest, refuses a host whose fingerprint (GPU, driver, CUDA, cuDNN, PyTorch, and kernel versions) differs from the checkpoint host's, and starts a fresh training process with the recorded command. The design also describes a GPU process snapshot, which is planned.
 
 ## Try a checkpoint and restore
 

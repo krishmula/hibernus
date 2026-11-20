@@ -56,7 +56,6 @@ func publishedRestorePoint(t *testing.T, mem *store.Memory, workload string, ste
 		Workload:      workload,
 		Step:          step,
 		CreatedAt:     time.Unix(1700000000, 0).UTC(),
-		Fingerprint:   map[string]string{},
 		Command:       manifest.Command{Argv: []string{"python", "train.py"}, Cwd: "/work", Env: map[string]string{}},
 		Layers: manifest.Layers{
 			ApplicationCheckpoint: manifest.Layer{Status: manifest.StatusOK, Files: files},
