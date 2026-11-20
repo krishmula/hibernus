@@ -5,6 +5,7 @@ it on another host. Needs torch and numpy: `pip install -e "python[train]"`.
 """
 
 import argparse
+import sys
 
 import hibernus
 from hibernus.workload import build_trainer
@@ -17,6 +18,7 @@ def main():
     args = parser.parse_args()
 
     trainer = build_trainer(init_seed=args.seed, shuffle_seed=args.seed, total_updates=args.updates)
+    print(f"training on {trainer.device}", file=sys.stderr, flush=True)
     hib = hibernus.connect()
     state = {"trainer": trainer}
     hib.initialize(state)  # after a restore, the trainer is back at the update it stopped at
