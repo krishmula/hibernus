@@ -15,6 +15,14 @@ def run(trainer, updates):
     return [trainer.run_update() for _ in range(updates)]
 
 
+def save(path, trainer):
+    app_checkpoint.save(path, trainer.progress.completed_updates, {"trainer": trainer})
+
+
+def load(path, trainer, **kwargs):
+    return app_checkpoint.load(path, {"trainer": trainer}, **kwargs)
+
+
 def fail_save(*args, **kwargs):
     raise OSError("disk full")
 
@@ -40,14 +48,14 @@ def resume_matches(tmp_path, save_after, then, **kwargs):
 
     reference = build_trainer(**kwargs)
     run(reference, save_after)
-    app_checkpoint.save(path, reference)
+    save(path, reference)
     expected = run(reference, then)
 
     # A fresh trainer starts from different weights and a different RNG stream, so only the
     # checkpoint can make it match.
     restored = build_trainer(init_seed=999, **kwargs)
     torch.manual_seed(12345)
-    app_checkpoint.load(path, restored)
+    load(path, restored)
     actual = run(restored, then)
 
     assert actual == expected  # same next batches, same sample IDs, same losses
@@ -58,7 +66,7 @@ def test_save_writes_one_file_and_no_temporary_file(tmp_path):
     trainer = build_trainer()
     run(trainer, 2)
 
-    app_checkpoint.save(tmp_path / "app.pt", trainer)
+    save(tmp_path / "app.pt", trainer)
 
     assert os.listdir(tmp_path) == ["app.pt"]
 
@@ -66,16 +74,19 @@ def test_save_writes_one_file_and_no_temporary_file(tmp_path):
 def test_the_file_holds_every_piece_of_state(tmp_path):
     trainer = build_trainer(use_scaler=True)
     run(trainer, 2)
-    app_checkpoint.save(tmp_path / "app.pt", trainer)
+    save(tmp_path / "app.pt", trainer)
 
     saved = torch.load(tmp_path / "app.pt", weights_only=False)
 
-    assert set(saved) >= {
-        "schema_version", "model", "optimizer", "scheduler", "scaler", "progress", "sampler",
-        "rng", "dataset_version",
+    assert set(saved) == {"schema_version", "step", "config", "state", "rng"}
+    assert saved["config"] == {}
+    assert saved["step"] == 2
+    assert set(saved["state"]) == {"trainer"}
+    assert set(saved["state"]["trainer"]) == {
+        "model", "optimizer", "scheduler", "scaler", "progress", "sampler", "dataset_version",
     }
-    assert saved["progress"] == {"completed_updates": 2, "epoch": 0, "position": 8}
-    assert saved["sampler"]["seed"] == 0
+    assert saved["state"]["trainer"]["progress"] == {"completed_updates": 2, "epoch": 0, "position": 8}
+    assert saved["state"]["trainer"]["sampler"]["seed"] == 0
     assert set(saved["rng"]) >= {"python", "numpy", "torch_cpu"}
 
 
@@ -84,20 +95,20 @@ def test_a_failed_save_leaves_no_file_behind(tmp_path, monkeypatch):
 
     monkeypatch.setattr(torch, "save", fail_save)
     with pytest.raises(OSError):
-        app_checkpoint.save(tmp_path / "app.pt", trainer)
+        save(tmp_path / "app.pt", trainer)
 
     assert os.listdir(tmp_path) == []
 
 
 def test_a_failed_save_keeps_the_previous_checkpoint(tmp_path, monkeypatch):
     trainer = build_trainer()
-    app_checkpoint.save(tmp_path / "app.pt", trainer)
+    save(tmp_path / "app.pt", trainer)
     before = (tmp_path / "app.pt").read_bytes()
     run(trainer, 1)
 
     monkeypatch.setattr(torch, "save", fail_save)
     with pytest.raises(OSError):
-        app_checkpoint.save(tmp_path / "app.pt", trainer)
+        save(tmp_path / "app.pt", trainer)
 
     assert (tmp_path / "app.pt").read_bytes() == before
 
@@ -118,11 +129,11 @@ def test_resume_with_a_grad_scaler(tmp_path):
 def test_resume_restores_the_scheduler_learning_rate(tmp_path):
     reference = build_trainer()
     run(reference, 3)
-    app_checkpoint.save(tmp_path / "app.pt", reference)
+    save(tmp_path / "app.pt", reference)
     restored = build_trainer(init_seed=7)
     fresh_lr = restored.optimizer.param_groups[0]["lr"]
 
-    app_checkpoint.load(tmp_path / "app.pt", restored)
+    load(tmp_path / "app.pt", restored)
 
     assert restored.scheduler.get_last_lr() == reference.scheduler.get_last_lr()
     assert restored.optimizer.param_groups[0]["lr"] != fresh_lr
@@ -131,13 +142,13 @@ def test_resume_restores_the_scheduler_learning_rate(tmp_path):
 def test_resume_restores_python_numpy_and_torch_rng(tmp_path):
     trainer = build_trainer()
     run(trainer, 1)
-    app_checkpoint.save(tmp_path / "app.pt", trainer)
+    save(tmp_path / "app.pt", trainer)
     expected = (random.random(), np.random.rand(), torch.rand(1).item())
 
     random.seed(1)
     np.random.seed(1)
     torch.manual_seed(1)
-    app_checkpoint.load(tmp_path / "app.pt", build_trainer())
+    load(tmp_path / "app.pt", build_trainer())
     actual = (random.random(), np.random.rand(), torch.rand(1).item())
 
     assert actual == expected
@@ -146,44 +157,44 @@ def test_resume_restores_python_numpy_and_torch_rng(tmp_path):
 def test_load_reads_the_same_next_batch_as_the_original_would(tmp_path):
     original = build_trainer()
     run(original, 2)
-    app_checkpoint.save(tmp_path / "app.pt", original)
+    save(tmp_path / "app.pt", original)
     restored = build_trainer(init_seed=5)
-    app_checkpoint.load(tmp_path / "app.pt", restored)
+    load(tmp_path / "app.pt", restored)
 
     assert restored.run_update().sample_ids == original.run_update().sample_ids
 
 
 def test_load_refuses_a_different_dataset(tmp_path):
-    app_checkpoint.save(tmp_path / "app.pt", build_trainer(data_seed=0))
+    save(tmp_path / "app.pt", build_trainer(data_seed=0))
 
     with pytest.raises(ValueError, match="dataset"):
-        app_checkpoint.load(tmp_path / "app.pt", build_trainer(data_seed=1))
+        load(tmp_path / "app.pt", build_trainer(data_seed=1))
 
 
 def test_load_refuses_a_different_shuffle_seed(tmp_path):
-    app_checkpoint.save(tmp_path / "app.pt", build_trainer(shuffle_seed=0))
+    save(tmp_path / "app.pt", build_trainer(shuffle_seed=0))
 
     with pytest.raises(ValueError, match="seed"):
-        app_checkpoint.load(tmp_path / "app.pt", build_trainer(shuffle_seed=1))
+        load(tmp_path / "app.pt", build_trainer(shuffle_seed=1))
 
 
 def test_load_refuses_an_unknown_schema_version(tmp_path):
-    app_checkpoint.save(tmp_path / "app.pt", build_trainer())
+    save(tmp_path / "app.pt", build_trainer())
     saved = torch.load(tmp_path / "app.pt", weights_only=False)
     saved["schema_version"] = 999
     torch.save(saved, tmp_path / "app.pt")
 
     with pytest.raises(ValueError, match="schema"):
-        app_checkpoint.load(tmp_path / "app.pt", build_trainer())
+        load(tmp_path / "app.pt", build_trainer())
 
 
 def test_a_failed_load_leaves_the_trainer_untouched(tmp_path):
-    app_checkpoint.save(tmp_path / "app.pt", build_trainer(data_seed=0))
+    save(tmp_path / "app.pt", build_trainer(data_seed=0))
     trainer = build_trainer(data_seed=1)
     before = {k: v.clone() for k, v in trainer.model.state_dict().items()}
 
     with pytest.raises(ValueError):
-        app_checkpoint.load(tmp_path / "app.pt", trainer)
+        load(tmp_path / "app.pt", trainer)
 
     assert all(torch.equal(before[k], v) for k, v in trainer.model.state_dict().items())
     assert trainer.progress.completed_updates == 0
@@ -191,20 +202,73 @@ def test_a_failed_load_leaves_the_trainer_untouched(tmp_path):
 
 def test_load_of_a_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
-        app_checkpoint.load(tmp_path / "nope.pt", build_trainer())
+        load(tmp_path / "nope.pt", build_trainer())
 
 
 def test_load_refuses_a_different_batch_size_before_changing_training_state(tmp_path):
     original = build_trainer(batch_size=4)
     run(original, 1)
-    app_checkpoint.save(tmp_path / "app.pt", original)
+    save(tmp_path / "app.pt", original)
     trainer = build_trainer(init_seed=9, batch_size=8)
     before = {name: value.clone() for name, value in trainer.model.state_dict().items()}
     rng_before = torch.get_rng_state().clone()
 
     with pytest.raises(ValueError, match="batch size"):
-        app_checkpoint.load(tmp_path / "app.pt", trainer)
+        load(tmp_path / "app.pt", trainer)
 
     assert trainer.progress.completed_updates == 0
     assert all(torch.equal(before[name], value) for name, value in trainer.model.state_dict().items())
     assert torch.equal(rng_before, torch.get_rng_state())
+
+
+def test_load_returns_the_step_it_holds(tmp_path):
+    trainer = build_trainer()
+    run(trainer, 3)
+    save(tmp_path / "app.pt", trainer)
+
+    assert load(tmp_path / "app.pt", build_trainer(init_seed=9)) == 3
+
+
+def test_load_refuses_different_names_before_changing_anything(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    app_checkpoint.save(tmp_path / "app.pt", 1, {"model": model})
+    fresh = torch.nn.Linear(2, 2)
+    before = {name: value.clone() for name, value in fresh.state_dict().items()}
+
+    with pytest.raises(ValueError, match="optimizer"):
+        app_checkpoint.load(
+            tmp_path / "app.pt", {"model": fresh, "optimizer": torch.optim.SGD(fresh.parameters(), lr=1)}
+        )
+
+    assert all(torch.equal(before[name], value) for name, value in fresh.state_dict().items())
+
+
+def test_load_refuses_a_different_config_before_changing_anything(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    app_checkpoint.save(tmp_path / "app.pt", 1, {"model": model}, {"seed": 0, "batch_size": 32})
+    fresh = torch.nn.Linear(2, 2)
+    before = {name: value.clone() for name, value in fresh.state_dict().items()}
+    rng_before = torch.get_rng_state().clone()
+
+    with pytest.raises(ValueError, match="batch_size was 32, now 64"):
+        app_checkpoint.load(tmp_path / "app.pt", {"model": fresh}, {"seed": 0, "batch_size": 64})
+
+    assert all(torch.equal(before[name], value) for name, value in fresh.state_dict().items())
+    assert torch.equal(rng_before, torch.get_rng_state())
+
+
+def test_load_refuses_a_missing_config(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    app_checkpoint.save(tmp_path / "app.pt", 1, {"model": model}, {"seed": 0})
+
+    with pytest.raises(ValueError, match="seed was 0, now None"):
+        app_checkpoint.load(tmp_path / "app.pt", {"model": torch.nn.Linear(2, 2)})
+
+
+def test_load_accepts_the_same_config(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    app_checkpoint.save(tmp_path / "app.pt", 1, {"model": model}, {"seed": 0, "batch_size": 32})
+    fresh = torch.nn.Linear(2, 2)
+
+    assert app_checkpoint.load(tmp_path / "app.pt", {"model": fresh}, {"seed": 0, "batch_size": 32}) == 1
+    assert all(torch.equal(model.state_dict()[k], v) for k, v in fresh.state_dict().items())

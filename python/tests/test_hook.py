@@ -58,7 +58,7 @@ def test_a_pause_writes_app_pt_and_reports_it(tmp_path):
     run(trainer, 2)
 
     with pytest.raises(ConnectionError):  # the hook waits until the host goes away
-        sup.hook.boundary(2, trainer=trainer)
+        sup.hook.boundary(2, {"trainer": trainer})
     sup.finish()
 
     assert sup.requests == [
@@ -68,7 +68,7 @@ def test_a_pause_writes_app_pt_and_reports_it(tmp_path):
     # Both trainers draw from the one global RNG, so run the original first, then load.
     expected = trainer.run_update()
     restored = build_trainer(init_seed=9)
-    app_checkpoint.load(app / "app.pt", restored)
+    app_checkpoint.load(app / "app.pt", {"trainer": restored})
     assert restored.run_update() == expected
 
 
@@ -77,12 +77,12 @@ def test_no_pause_means_no_file(tmp_path):
     trainer = build_trainer()
     run(trainer, 1)
 
-    sup.hook.boundary(1, trainer=trainer)
+    sup.hook.boundary(1, {"trainer": trainer})
 
     assert list(tmp_path.iterdir()) == []
 
 
-def test_a_failed_save_is_reported_to_the_supervisor(tmp_path, monkeypatch):
+def test_a_failed_write_is_reported_to_the_supervisor(tmp_path, monkeypatch):
     app = tmp_path / "app"
     app.mkdir()
     sup = FakeSupervisor({"boundary": {"pause": True, "dir": str(app)}})
@@ -94,32 +94,21 @@ def test_a_failed_save_is_reported_to_the_supervisor(tmp_path, monkeypatch):
 
     monkeypatch.setattr(torch, "save", disk_full)
     with pytest.raises(ConnectionError):
-        sup.hook.boundary(1, trainer=trainer)
+        sup.hook.boundary(1, {"trainer": trainer})
     sup.finish()
 
     assert sup.requests[1] == {"op": "app_checkpoint", "error": "disk full"}
 
 
-def test_a_boundary_step_that_disagrees_with_the_trainer_is_refused():
-    sup = FakeSupervisor({"boundary": {"pause": False}})
-    trainer = build_trainer()
-    run(trainer, 2)
-
-    with pytest.raises(ValueError, match="step"):
-        sup.hook.boundary(5, trainer=trainer)
-
-    assert sup.requests == []  # nothing was reported
-
-
 def test_initialize_after_a_restore_loads_the_trainer_and_returns_the_step(tmp_path):
     original = build_trainer()
     run(original, 3)
-    app_checkpoint.save(tmp_path / "app.pt", original)
+    app_checkpoint.save(tmp_path / "app.pt", 3, {"trainer": original})
     expected = original.run_update()  # before the load, because both share the global RNG
     sup = FakeSupervisor({"initialize": {"resume": {"step": 3, "files": [str(tmp_path / "app.pt")]}}})
     fresh = build_trainer(init_seed=9)
 
-    step = sup.hook.initialize(trainer=fresh)
+    step = sup.hook.initialize({"trainer": fresh})
 
     assert step == 3
     assert fresh.progress.completed_updates == 3
@@ -129,14 +118,14 @@ def test_initialize_after_a_restore_loads_the_trainer_and_returns_the_step(tmp_p
 def test_initialize_refuses_a_checkpoint_that_disagrees_with_the_manifest_step(tmp_path):
     original = build_trainer()
     run(original, 3)
-    app_checkpoint.save(tmp_path / "app.pt", original)
+    app_checkpoint.save(tmp_path / "app.pt", 3, {"trainer": original})
     sup = FakeSupervisor({"initialize": {"resume": {"step": 4, "files": [str(tmp_path / "app.pt")]}}})
 
     fresh = build_trainer(init_seed=9)
     before = {name: value.clone() for name, value in fresh.model.state_dict().items()}
     rng_before = torch.get_rng_state().clone()
     with pytest.raises(ValueError, match="step"):
-        sup.hook.initialize(trainer=fresh)
+        sup.hook.initialize({"trainer": fresh})
 
     assert fresh.progress.completed_updates == 0
     assert all(torch.equal(before[name], value) for name, value in fresh.model.state_dict().items())
@@ -149,14 +138,14 @@ def test_initialize_refuses_a_restore_point_without_app_pt(tmp_path):
     sup = FakeSupervisor({"initialize": {"resume": {"step": 3, "files": [str(other)]}}})
 
     with pytest.raises(RuntimeError, match="app.pt"):
-        sup.hook.initialize(trainer=build_trainer())
+        sup.hook.initialize({"trainer": build_trainer()})
 
 
 def test_a_fresh_initialize_leaves_the_trainer_alone():
     sup = FakeSupervisor({"initialize": {"resume": None}})
     trainer = build_trainer()
 
-    assert sup.hook.initialize(trainer=trainer) == 0
+    assert sup.hook.initialize({"trainer": trainer}) == 0
     assert trainer.progress.completed_updates == 0
 
 
@@ -166,15 +155,15 @@ def test_without_a_supervisor_a_trainer_trains_normally(monkeypatch):
     assert isinstance(hook, hibernus.NoSupervisor)
     trainer = build_trainer()
 
-    assert hook.initialize(trainer=trainer) == 0
+    assert hook.initialize({"trainer": trainer}) == 0
     for _ in range(3):
         trainer.run_update()
-        hook.boundary(trainer.progress.completed_updates, trainer=trainer)
+        hook.boundary(trainer.progress.completed_updates, {"trainer": trainer})
 
     assert trainer.progress.completed_updates == 3
 
 
-def test_without_a_trainer_the_stand_in_step_file_still_works(tmp_path):
+def test_without_state_the_stand_in_step_file_still_works(tmp_path):
     app = tmp_path / "app"
     sup = FakeSupervisor({"boundary": {"pause": True, "dir": str(app)}})
 
@@ -186,8 +175,51 @@ def test_without_a_trainer_the_stand_in_step_file_still_works(tmp_path):
     assert sup.requests[1]["files"] == [str(app / "step.json")]
 
 
-def test_without_a_supervisor_a_wrong_boundary_step_is_refused(monkeypatch):
-    monkeypatch.delenv("HIB_SOCKET", raising=False)
-    hook = hibernus.connect()
-    with pytest.raises(ValueError, match="step"):
-        hook.boundary(1, trainer=build_trainer())
+def plain_loop(seed):
+    """A model, optimizer, and scheduler held in plain variables, with no Trainer."""
+    torch.manual_seed(seed)
+    model = torch.nn.Sequential(torch.nn.Linear(4, 8), torch.nn.Dropout(0.5), torch.nn.Linear(8, 2))
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+    data = torch.randn(6, 4, generator=torch.Generator().manual_seed(0))
+
+    def update(step):
+        loss = model(data[step % len(data)]).pow(2).sum()
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
+        return loss.item()
+
+    return {"model": model, "optimizer": optimizer, "scheduler": scheduler}, update
+
+
+def test_a_plain_loop_pauses_and_restores_to_the_same_losses(tmp_path):
+    state, update = plain_loop(seed=0)
+    expected = [update(step) for step in range(6)]
+
+    app = tmp_path / "app"
+    sup = FakeSupervisor({"boundary": {"pause": True, "dir": str(app)}})
+    state, update = plain_loop(seed=0)
+    before = [update(step) for step in range(3)]
+    with pytest.raises(ConnectionError):
+        sup.hook.boundary(3, state, {"batch_size": 1})
+    sup.finish()
+
+    files = sup.requests[1]["files"]
+    sup = FakeSupervisor({"initialize": {"resume": {"step": 3, "files": files}}})
+    state, update = plain_loop(seed=9)  # other weights and RNG stream, so only the load can match
+    step = sup.hook.initialize(state, {"batch_size": 1})
+    after = [update(s) for s in range(step, 6)]
+
+    assert step == 3
+    assert before + after == expected
+
+
+def test_initialize_refuses_a_restore_with_a_different_config(tmp_path):
+    state, _ = plain_loop(seed=0)
+    app_checkpoint.save(tmp_path / "app.pt", 3, state, {"batch_size": 1})
+    sup = FakeSupervisor({"initialize": {"resume": {"step": 3, "files": [str(tmp_path / "app.pt")]}}})
+
+    with pytest.raises(ValueError, match="batch_size was 1, now 2"):
+        sup.hook.initialize(plain_loop(seed=9)[0], {"batch_size": 2})

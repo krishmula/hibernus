@@ -1,8 +1,11 @@
-"""The application checkpoint: the state the training loop owns, saved with torch.save.
+"""The application checkpoint: the state the training loop owns, written with torch.save.
 
 `save` runs at an update boundary, so there are no partial gradients and the next batch has not
-been read. `load` puts a fresh trainer back in that state. A trainer here is anything with the
-attributes of `hibernus.workload.Trainer`.
+been read. `load` puts the loop's objects back in that state. The loop names its objects in a
+dict, such as {"model": model, "optimizer": optimizer, "scheduler": scheduler}. Each one needs
+state_dict() and load_state_dict(), as every torch module, optimizer, and scheduler has. The file
+also holds the step and the Python, NumPy, and torch RNG states, so the loop never passes those.
+An optional config holds plain values that must match on restore, such as the shuffle seed.
 
 The file is a pickle, so load only files the Supervisor wrote. The RNG states are not plain
 tensors, which is why `torch.load` runs with `weights_only=False`.
@@ -15,33 +18,23 @@ import tempfile
 import numpy as np
 import torch
 
-from hibernus.workload import Progress
-
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
-def save(path, trainer):
+def save(path, step, state, config=None):
     """Writes the checkpoint to `path`. It appears whole or not at all."""
-    state = {
+    payload = {
         "schema_version": SCHEMA_VERSION,
-        "model": trainer.model.state_dict(),  # weights and buffers
-        "optimizer": trainer.optimizer.state_dict(),
-        "scheduler": trainer.scheduler.state_dict(),
-        "scaler": trainer.scaler.state_dict() if trainer.scaler is not None else None,
-        "progress": {
-            "completed_updates": trainer.progress.completed_updates,
-            "epoch": trainer.progress.epoch,
-            "position": trainer.progress.position,
-        },
-        "sampler": {"seed": trainer.sampler.seed, "batch_size": trainer.sampler.batch_size},
+        "step": step,
+        "config": config or {},
+        "state": {name: obj.state_dict() for name, obj in state.items()},
         "rng": _capture_rng(),
-        "dataset_version": trainer.dataset.version,
     }
     folder = os.path.dirname(os.path.abspath(path))
     fd, temporary = tempfile.mkstemp(dir=folder, prefix=".app-", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
-            torch.save(state, f)
+            torch.save(payload, f)
             f.flush()
             os.fsync(f.fileno())
         os.replace(temporary, path)
@@ -51,42 +44,43 @@ def save(path, trainer):
         raise
 
 
-def load(path, trainer, *, expected_step=None):
-    """Restores `trainer` from `path`. It checks everything first, so a refusal changes nothing."""
-    state = torch.load(path, weights_only=False)
-    _check(state, trainer)
-    if expected_step is not None and state["progress"]["completed_updates"] != expected_step:
-        raise ValueError(
-            f"{path} holds step {state['progress']['completed_updates']}, "
-            f"but the manifest says step {expected_step}"
-        )
+def load(path, state, config=None, *, expected_step=None):
+    """Loads `path` into the objects in `state` and returns the step it holds.
 
-    trainer.model.load_state_dict(state["model"])
-    trainer.optimizer.load_state_dict(state["optimizer"])
-    trainer.scheduler.load_state_dict(state["scheduler"])
-    if trainer.scaler is not None:
-        trainer.scaler.load_state_dict(state["scaler"])
-    trainer.progress = Progress(**state["progress"])
-    trainer.reset_data_position()
-    _restore_rng(state["rng"])
+    It checks the schema, the step, the config, and the names before it changes anything. Each
+    object's own load_state_dict then makes its own checks.
+    """
+    payload = torch.load(path, weights_only=False)
+    _check(path, payload, state, config or {}, expected_step)
+    for name, obj in state.items():
+        obj.load_state_dict(payload["state"][name])
+    _restore_rng(payload["rng"])
+    return payload["step"]
 
 
-def _check(state, trainer):
-    if state.get("schema_version") != SCHEMA_VERSION:
+def _check(path, payload, state, config, expected_step):
+    if payload.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
-            f"unknown checkpoint schema version {state.get('schema_version')}, want {SCHEMA_VERSION}"
+            f"unknown checkpoint schema version {payload.get('schema_version')}, "
+            f"want {SCHEMA_VERSION}"
         )
-    if state["dataset_version"] != trainer.dataset.version:
-        raise ValueError("the checkpoint was saved with a different dataset")
-    if state["sampler"]["seed"] != trainer.sampler.seed:
+    if expected_step is not None and payload["step"] != expected_step:
         raise ValueError(
-            f"the checkpoint has shuffle seed {state['sampler']['seed']}, "
-            f"but the trainer has {trainer.sampler.seed}"
+            f"{path} holds step {payload['step']}, but the manifest says step {expected_step}"
         )
-    if state["sampler"].get("batch_size") != trainer.sampler.batch_size:
-        raise ValueError("the checkpoint and the trainer have a different batch size")
-    if (state["scaler"] is None) != (trainer.scaler is None):
-        raise ValueError("the checkpoint and the trainer disagree about using a GradScaler")
+    if payload["config"] != config:
+        changed = sorted(
+            key for key in set(payload["config"]) | set(config)
+            if payload["config"].get(key) != config.get(key)
+        )
+        details = ", ".join(
+            f"{key} was {payload['config'].get(key)!r}, now {config.get(key)!r}" for key in changed
+        )
+        raise ValueError(f"{path} was written with a different config: {details}")
+    if set(payload["state"]) != set(state):
+        raise ValueError(
+            f"{path} holds {sorted(payload['state'])}, but the training loop passed {sorted(state)}"
+        )
 
 
 def _capture_rng():

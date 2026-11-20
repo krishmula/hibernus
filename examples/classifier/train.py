@@ -1,4 +1,4 @@
-"""The small image classifier, trained under Hibernus. It saves and restores the full state.
+"""The small image classifier, trained under Hibernus.
 
 Run it alone to train, or under `hib run`, which checkpoints it at an update boundary and restores
 it on another host. Needs torch and numpy: `pip install -e "python[train]"`.
@@ -18,11 +18,12 @@ def main():
 
     trainer = build_trainer(init_seed=args.seed, shuffle_seed=args.seed, total_updates=args.updates)
     hib = hibernus.connect()
-    hib.initialize(trainer=trainer)  # after a restore, the trainer is back at the saved update
+    state = {"trainer": trainer}
+    hib.initialize(state)  # after a restore, the trainer is back at the update it stopped at
     while trainer.progress.completed_updates < args.updates:
         record = trainer.run_update()
         print(f"step {record.update} loss {record.loss:.4f}", flush=True)
-        hib.boundary(record.update, trainer=trainer)
+        hib.boundary(record.update, state)
 
 
 if __name__ == "__main__":
