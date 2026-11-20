@@ -13,6 +13,7 @@ import (
 
 	"github.com/krishmula/hibernus/internal/manifest"
 	"github.com/krishmula/hibernus/internal/protocol"
+	"github.com/krishmula/hibernus/internal/store"
 )
 
 // maxSocketPath stays under the smallest limit Unix systems put on a socket's path (104 bytes on macOS).
@@ -23,19 +24,32 @@ type Config struct {
 	Workload string
 	Store    string           // the folder that holds restore points, one subfolder per workload
 	Command  manifest.Command // how the training process started, recorded in each manifest
+
+	// Remote is where a checkpoint is published before it counts as done. Nil means the restore
+	// point stays in Store, and a checkpoint is done as soon as its manifest is written.
+	Remote *Remote
+}
+
+// Remote is durable storage for restore points: an S3 bucket.
+type Remote struct {
+	Store  store.Store
+	Bucket string // names the published restore point in what hib checkpoint prints
 }
 
 type Supervisor struct {
 	cfg Config
 
-	// mu guards every field below. handle, join, ChildExited, and giveUp take it, and every method
-	// they call runs with it already held.
-	mu      sync.Mutex
-	state   State
-	step    int
-	resume  *protocol.Resume // what initialize answers; nil for a fresh run
-	attempt *attempt         // the latest checkpoint, in progress or finished
-	err     string           // why the workload Failed
+	// mu guards the fields in this block. handle, join, ChildExited, giveUp, and publish take it,
+	// and every method they call runs with it already held.
+	mu        sync.Mutex
+	state     State
+	step      int
+	resume    *protocol.Resume // what initialize answers; nil for a fresh run
+	attempt   *attempt         // the latest checkpoint, in progress or finished
+	err       string           // why the workload Failed
+	uploading bool             // the restore point is being published; the training process may already be gone
+
+	work sync.WaitGroup // uploads in flight, so hib run doesn't exit under one
 }
 
 // New makes a Supervisor. With resume nil, it starts in Running. With resume set, it starts in
@@ -50,9 +64,18 @@ func New(cfg Config, resume *protocol.Resume) *Supervisor {
 	return s
 }
 
+// Settle waits for an upload in flight. hib run calls it after the training process exits, so
+// that it doesn't leave while the upload still runs.
+func (s *Supervisor) Settle() { s.work.Wait() }
+
 func (s *Supervisor) ChildExited(code int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.uploading {
+		// The restore point is already complete on this host, so the process ending does not
+		// change it. publish decides the state when the upload ends.
+		return
+	}
 	next := afterChildExit(s.state, code)
 	if next == Failed && s.state != Failed {
 		s.fail(fmt.Sprintf("the training process exited with code %d", code))
@@ -157,7 +180,7 @@ func (s *Supervisor) handle(req protocol.Request) any {
 func (s *Supervisor) status() protocol.StatusReply {
 	reply := protocol.StatusReply{State: string(s.state), Step: s.step}
 	if s.state == Checkpointed {
-		location := s.attempt.root
+		location := s.attempt.result.Location
 		reply.Location = &location
 	}
 	if s.err != "" {

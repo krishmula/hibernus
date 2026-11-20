@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 	"github.com/krishmula/hibernus/internal/supervisor"
 )
 
-const runUsage = "usage: hib run [--workload <name>] [--store <folder>] <command> [args...]\n"
+const runUsage = "usage: hib run [--workload <name>] [--store <folder>] [--remote s3://<bucket>] <command> [args...]\n"
 
 // closeGrace is how long hib run waits, after the training process exits, for each waiting
 // hib checkpoint to read its answer.
@@ -27,6 +28,7 @@ func runCommand(args []string) int {
 	flags.Usage = func() { fmt.Fprint(os.Stderr, runUsage) }
 	workload := workloadFlag(flags)
 	store := storeFlag(flags)
+	remoteFlag := flags.String("remote", "", "publish each restore point to s3://<bucket> before a checkpoint counts as done")
 	if code, ok := parseFlags(flags, args); !ok {
 		return code
 	}
@@ -44,6 +46,15 @@ func runCommand(args []string) int {
 		return exitBadCommand
 	}
 
+	bucket := ""
+	if *remoteFlag != "" {
+		var err error
+		if bucket, err = parseRemoteFlag(*remoteFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
+			return exitBadCommand
+		}
+	}
+
 	storeDir, err := filepath.Abs(*store)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
@@ -55,12 +66,25 @@ func runCommand(args []string) int {
 		return exitFailed
 	}
 
-	return supervise(supervisor.Config{
+	cfg := supervisor.Config{
 		Workload: *workload,
 		Store:    storeDir,
 		// The manifest records no environment variables yet, because they can hold secrets.
 		Command: manifest.Command{Argv: command, Cwd: cwd, Env: map[string]string{}},
-	}, nil)
+	}
+	if bucket != "" {
+		remote, err := remoteFor(context.Background(), bucket)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hib run: open the bucket: %v\n", err)
+			return exitFailed
+		}
+		if err := refuseTakenWorkload(context.Background(), remote, *workload); err != nil {
+			fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
+			return exitFailed
+		}
+		cfg.Remote = remote
+	}
+	return supervise(cfg, nil)
 }
 
 // supervise runs the Supervisor for one training process, from start to exit. hib run and hib restore
@@ -97,6 +121,7 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 
 	code := childExitCode(child.Wait())
 	sup.ChildExited(code)
+	sup.Settle() // an upload in flight must finish before hib exits
 
 	listener.Close()
 	select {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"github.com/krishmula/hibernus/internal/supervisor"
 )
 
-const restoreUsage = "usage: hib restore [--store <folder>] <location>\n"
+const restoreUsage = "usage: hib restore [--store <folder>] <folder | s3://<bucket>/<workload>/step-<K>-<attempt>/ | s3://<bucket>/<workload>/>\n"
 
 func restoreCommand(args []string) int {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)
@@ -26,12 +27,14 @@ func restoreCommand(args []string) int {
 		return exitBadCommand
 	}
 
-	root, err := filepath.Abs(flags.Arg(0))
+	storeDir, err := filepath.Abs(*store)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
 	}
-	storeDir, err := filepath.Abs(*store)
+	// An s3:// location is downloaded and verified into the store folder first. After that, a
+	// restore from S3 is a restore from a local folder.
+	root, remote, err := locateRestorePoint(context.Background(), flags.Arg(0), storeDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib restore: %v\n", err)
 		return exitFailed
@@ -47,7 +50,7 @@ func restoreCommand(args []string) int {
 		return exitFailed
 	}
 
-	return supervise(supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command}, resume)
+	return supervise(supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command, Remote: remote}, resume)
 }
 
 // resumeFromApplicationCheckpoint checks that the application checkpoint can bring the workload back

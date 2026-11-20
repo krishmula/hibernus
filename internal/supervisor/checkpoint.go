@@ -1,14 +1,17 @@
 package supervisor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/krishmula/hibernus/internal/layout"
 	"github.com/krishmula/hibernus/internal/manifest"
 	"github.com/krishmula/hibernus/internal/protocol"
+	"github.com/krishmula/hibernus/internal/store"
 )
 
 // defaultDeadline applies when a checkpoint request carries no deadline.
@@ -17,11 +20,18 @@ const defaultDeadline = 90 * time.Second
 // maxGiveUpMargin caps how long before the deadline the Supervisor gives up on a checkpoint.
 const maxGiveUpMargin = 5 * time.Second
 
+// retryWait is how long the first retry of a failed upload waits. It doubles up to maxRetryWait.
+// A variable so tests can shorten it.
+var retryWait = 500 * time.Millisecond
+
+const maxRetryWait = 5 * time.Second
+
 // attempt is one checkpoint. Every hib checkpoint that arrives while it runs waits for the same answer.
 type attempt struct {
-	root   string        // the restore point folder, chosen at the update boundary
-	done   chan struct{} // closed once result is set
-	result protocol.CheckpointReply
+	root     string        // the restore point folder, chosen at the update boundary
+	deadline time.Time     // when the attempt gives up; an upload's context ends then
+	done     chan struct{} // closed once result is set
+	result   protocol.CheckpointReply
 }
 
 func newAttempt() *attempt {
@@ -85,8 +95,9 @@ func (s *Supervisor) startAttempt(deadline time.Time) {
 		deadline = now.Add(defaultDeadline)
 	}
 	a := newAttempt()
+	a.deadline = giveUpAt(now, deadline)
 	s.attempt = a
-	time.AfterFunc(giveUpAt(now, deadline).Sub(now), func() { s.giveUp(a) })
+	time.AfterFunc(a.deadline.Sub(now), func() { s.giveUp(a) })
 }
 
 // giveUpAt keeps a tenth of the time left, at most maxGiveUpMargin, so the answer reaches the
@@ -122,7 +133,7 @@ func (s *Supervisor) pause() any {
 	if s.attempt.root != "" {
 		return protocol.Refusal{Reason: "the training hook is already paused"}
 	}
-	root := filepath.Join(s.cfg.Store, s.cfg.Workload, fmt.Sprintf("step-%d", s.step))
+	root := layout.LocalDir(s.cfg.Store, s.cfg.Workload, s.step)
 	app := filepath.Join(root, "app")
 	if err := prepareFolder(root, app); err != nil {
 		s.fail("make the restore point folder: " + err.Error())
@@ -145,22 +156,81 @@ func prepareFolder(root, app string) error {
 }
 
 // appCheckpointWritten runs when the training hook reports the application checkpoint. It writes
-// the manifest last and moves to Checkpointed.
+// the manifest last. With no remote, the restore point is done, and the state moves to
+// Checkpointed. With a remote, the restore point still has to be published, so the state stays
+// Checkpointing while publish runs in the background.
 func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
-	if s.state != Checkpointing || s.attempt.root == "" {
+	a := s.attempt
+	if s.state != Checkpointing || a.root == "" {
 		return
 	}
 	if hookError != "" {
 		s.fail("the training hook could not write the application checkpoint: " + hookError)
 		return
 	}
-	m, err := s.writeManifest(s.attempt.root, files)
+	m, err := s.writeManifest(a.root, files)
 	if err != nil {
 		s.fail("write the manifest: " + err.Error())
 		return
 	}
+	if s.cfg.Remote == nil {
+		s.markCheckpointed(a, a.root, m)
+		return
+	}
+	rp := layout.RestorePoint{Bucket: s.cfg.Remote.Bucket, Workload: m.Workload, Step: m.Step, Attempt: layout.NewAttempt(time.Now())}
+	s.uploading = true
+	s.work.Add(1)
+	go s.publish(a, rp, m)
+}
+
+// markCheckpointed records a finished restore point and answers every hib checkpoint that waits.
+func (s *Supervisor) markCheckpointed(a *attempt, location string, m manifest.Manifest) {
 	s.state = Checkpointed
-	s.attempt.resolve(protocol.CheckpointReply{OK: true, Location: s.attempt.root, Manifest: &m})
+	a.resolve(protocol.CheckpointReply{OK: true, Location: location, Manifest: &m})
+}
+
+// publish uploads the attempt's restore point to the remote as rp, and then finishes or fails the
+// checkpoint. It runs without the lock: an upload can take minutes, and meanwhile hib status and
+// the deadline timer need the lock.
+func (s *Supervisor) publish(a *attempt, rp layout.RestorePoint, m manifest.Manifest) {
+	defer s.work.Done()
+	ctx, cancel := context.WithDeadline(context.Background(), a.deadline)
+	defer cancel()
+	err := publishWithRetry(ctx, s.cfg.Remote.Store, a.root, rp.Attempt)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.uploading = false
+	if s.state != Checkpointing || s.attempt != a {
+		return // the deadline passed during the upload, and the attempt already failed
+	}
+	switch {
+	case err == nil:
+		s.markCheckpointed(a, rp.S3URL(), m)
+	case ctx.Err() != nil:
+		s.fail("the deadline arrived before the restore point was uploaded: " + err.Error())
+	default:
+		s.fail("publish the restore point: " + err.Error())
+	}
+}
+
+// publishWithRetry publishes until it works, the context ends, or an error comes that waiting
+// cannot fix, such as a wrong credential. Publish is safe to repeat: a file that is already stored
+// with the same content is accepted.
+func publishWithRetry(ctx context.Context, st store.Store, root, attempt string) error {
+	wait := retryWait
+	for {
+		err := store.Publish(ctx, st, root, attempt)
+		if err == nil || store.Permanent(err) || ctx.Err() != nil {
+			return err
+		}
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			return fmt.Errorf("%w (the last upload error: %v)", ctx.Err(), err)
+		}
+		wait = min(wait*2, maxRetryWait)
+	}
 }
 
 func (s *Supervisor) writeManifest(root string, written []string) (manifest.Manifest, error) {

@@ -134,7 +134,7 @@ Each Supervisor listens on one Unix socket, named after its workload, such as `/
 
 | Command | Request | Reply |
 |---|---|---|
-| `hib checkpoint` | `{"op": "checkpoint", "deadline": "2026-11-16T10:02:00Z"}` | Success: `{"ok": true, "location": "s3://bucket/demo/step-1200/", "manifest": {...}}`. Failure: `{"ok": false, "state": "Failed", "error": "..."}`. |
+| `hib checkpoint` | `{"op": "checkpoint", "deadline": "2026-11-16T10:02:00Z"}` | Success: `{"ok": true, "location": "s3://bucket/demo/step-1200-20261119T163000Z-3fa94c1e/", "manifest": {...}}`. Failure: `{"ok": false, "state": "Failed", "error": "..."}`. |
 | `hib status` | `{"op": "status"}` | `{"state": "Running", "step": 1200, "location": null, "error": null}` |
 
 `hib checkpoint` waits for the reply until the Supervisor reaches a final answer. The reply includes `location`, because the manifest doesn't say where it is stored, and the Launcher passes that location to `hib restore`.
@@ -186,6 +186,8 @@ The first build proves the whole path with a fake checkpoint, on macOS, with a t
 The Supervisor and the `hib` commands are written in Go, as one binary. The training hook is written in Python, because it runs inside `train.py`. The socket messages above are the only contract between the two languages, and the end-to-end check catches any drift between them.
 
 The first build writes the restore point to a local folder instead of S3, so it needs no cloud setup. S3 comes later, as its own step. The folder is `~/.hib/restore-points/<workload>/step-<K>/`, and `--store` on `hib run` and `hib restore` changes the part before `<workload>`.
+
+With `hib run --remote s3://<bucket>`, each checkpoint is also published to `s3://<bucket>/<workload>/step-<K>-<attempt>/`. The attempt is the UTC time the upload started plus random hex, such as `20261119T163000Z-3fa94c1e`. Stored files never change, and the IAM policy grants no delete, so an upload that was cut off leaves its files in place for good. Its own attempt folder keeps those files from blocking a later checkpoint at the same step. `hib restore s3://<bucket>/<workload>/` takes the highest step that has a complete manifest, and the latest attempt within that step. `hib run --remote` refuses a workload name that already has a complete restore point in the bucket, because the new run's restore points would mix with the old run's. Choose another `--workload`, or continue the old run with `hib restore`.
 
 The Supervisor gives up on a checkpoint a tenth of the remaining time before the deadline, at most 5 seconds early. If the deadline arrives while a queued checkpoint waits in Restoring, only that request fails, and the restore goes on.
 
