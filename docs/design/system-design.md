@@ -217,6 +217,31 @@ flowchart TD
     R --> M["Report the restore time and which layer was used"]
 ```
 
+### Failure path
+
+The checkpoint path and the restore path each have failure branches. The supervisor owns every retry. The disruption handler runs `hib checkpoint` once, with a deadline, and gets one final answer.
+
+```mermaid
+flowchart TD
+    S["Checkpointing: layers written, upload and verify"] --> U{"Every file in S3 verified?"}
+    U -->|yes| M["Write the manifest last"]
+    M --> OK["Checkpointed: exit 0, reply with location, step, time"]
+    U -->|"no, error a retry can fix"| R{"Deadline left?"}
+    R -->|yes| S
+    R -->|"no, gives up a few seconds early"| L{"At least one layer verified?"}
+    U -->|"no, error a retry can't fix"| L
+    L -->|yes| P["Write the manifest, mark the failed layer with its error"]
+    P --> OK
+    L -->|no| F["Failed: no manifest, exit 1"]
+    T["Training process dies mid-checkpoint"] --> F
+```
+
+- **A half-finished upload is invisible.** The manifest is written last. A folder with no manifest is not a restore point, and `hib restore` refuses it (N4).
+- **One bad layer doesn't fail the checkpoint.** If the process snapshot fails but the application checkpoint verifies, the manifest records `process_snapshot: failed` with the error. The state still becomes Checkpointed, and a restore uses the fallback (N3).
+- **Failed is final.** The handler gets exit code 1 and raises an alarm. The workload loses the progress since it started or was last restored. The supervisor stays alive, so a repeated `hib checkpoint` gets the same answer.
+- **Restore failures.** A manifest check, a size or checksum mismatch, or a fingerprint mismatch makes `hib restore` refuse before anything starts, with exit code 1. If CRIU fails, the supervisor stops the partial process and falls back to the application checkpoint. If that fails too, the workload goes to Failed.
+- **Open question.** If only the process snapshot verifies and the application checkpoint failed, the checkpoint is Checkpointed but has no fallback. Decide whether v1 accepts that or treats it as Failed.
+
 ### What the restore host must provide
 
 - A fingerprint that matches the saving host.
