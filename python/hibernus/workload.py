@@ -3,13 +3,15 @@
 The model has dropout and batch norm, the data is a map-style dataset read with
 `num_workers=0`, and one optimizer update takes four microbatches. Each call to
 `Trainer.run_update` ends at an update boundary: the optimizer, scheduler and gradient reset have
-finished, and the next batch has not been read. That is where the application checkpoint is saved.
+finished, and the next batch has not been read. That is where the application checkpoint is written.
+`Trainer.state_dict` and `Trainer.load_state_dict` let the hook treat the whole trainer as one
+object, the way it treats a plain model or optimizer.
 
 Needs torch and numpy, so the training hook in `hibernus/__init__.py` does not import it.
 """
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import torch
 from torch import nn
@@ -134,6 +136,41 @@ class Trainer:
             dataset, batch_sampler=sampler, num_workers=0, generator=torch.Generator()
         )
         self._batches = None
+
+    def state_dict(self):
+        return {
+            "model": self.model.state_dict(),  # weights and buffers
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.scheduler.state_dict(),
+            "scaler": self.scaler.state_dict() if self.scaler is not None else None,
+            "progress": asdict(self.progress),
+            "sampler": {"seed": self.sampler.seed, "batch_size": self.sampler.batch_size},
+            "dataset_version": self.dataset.version,
+        }
+
+    def load_state_dict(self, state):
+        """Checks everything first, so a refusal changes nothing."""
+        self._check(state)
+        self.model.load_state_dict(state["model"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        self.scheduler.load_state_dict(state["scheduler"])
+        if self.scaler is not None:
+            self.scaler.load_state_dict(state["scaler"])
+        self.progress = Progress(**state["progress"])
+        self.reset_data_position()
+
+    def _check(self, state):
+        if state["dataset_version"] != self.dataset.version:
+            raise ValueError("the checkpoint was written with a different dataset")
+        if state["sampler"]["seed"] != self.sampler.seed:
+            raise ValueError(
+                f"the checkpoint has shuffle seed {state['sampler']['seed']}, "
+                f"but the trainer has {self.sampler.seed}"
+            )
+        if state["sampler"]["batch_size"] != self.sampler.batch_size:
+            raise ValueError("the checkpoint and the trainer have a different batch size")
+        if (state["scaler"] is None) != (self.scaler is None):
+            raise ValueError("the checkpoint and the trainer disagree about using a GradScaler")
 
     def reset_data_position(self):
         """Drops the open data iterator so the next update starts from `progress`."""
