@@ -23,7 +23,7 @@ commands:
                       checkpoint a running workload and print the restore point location
   status [--workload <name>]
                       show a workload's state
-  restore [--store <folder>] <folder | s3://<bucket>/<workload>/step-<K>/ | s3://<bucket>/<workload>/>
+  restore [--store <folder>] <folder | s3://<bucket>/<workload>/step-<K>-<attempt>/ | s3://<bucket>/<workload>/>
                       restore a workload from a restore point; an s3:// location is downloaded and
                       verified first, and s3://<bucket>/<workload>/ means the newest restore point
                       that is complete

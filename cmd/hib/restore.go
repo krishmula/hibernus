@@ -13,7 +13,7 @@ import (
 	"github.com/krishmula/hibernus/internal/supervisor"
 )
 
-const restoreUsage = "usage: hib restore [--store <folder>] <folder | s3://<bucket>/<workload>/step-<K>/ | s3://<bucket>/<workload>/>\n"
+const restoreUsage = "usage: hib restore [--store <folder>] <folder | s3://<bucket>/<workload>/step-<K>-<attempt>/ | s3://<bucket>/<workload>/>\n"
 
 func restoreCommand(args []string) int {
 	flags := flag.NewFlagSet("restore", flag.ContinueOnError)

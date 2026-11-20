@@ -173,7 +173,7 @@ func TestIntegrationS3LargeRestorePointRoundTrip(t *testing.T) {
 	root := makeBigRestorePoint(t, "demo", 7, size)
 
 	start := time.Now()
-	if err := Publish(bg, st, root); err != nil {
+	if err := Publish(bg, st, root, testAttempt); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 	up := time.Since(start)
@@ -181,7 +181,7 @@ func TestIntegrationS3LargeRestorePointRoundTrip(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "restored")
 	start = time.Now()
-	if _, err := Fetch(bg, st, "demo", 7, dest); err != nil {
+	if _, err := Fetch(bg, st, at("demo", 7), dest); err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
 	down := time.Since(start)

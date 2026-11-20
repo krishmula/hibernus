@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -24,35 +25,52 @@ func putAll(t *testing.T, mem *Memory, keys ...string) {
 	}
 }
 
-func TestStepsListsRestorePointFoldersNewestFirst(t *testing.T) {
+func TestListListsRestorePointFoldersNewestFirst(t *testing.T) {
 	mem := NewMemory()
 	putAll(t, mem,
-		"demo/step-9/manifest.json", "demo/step-10/manifest.json", "demo/step-100/manifest.json",
-		"demo/notes/readme.txt",        // not a step folder
-		"demo/step-007/manifest.json",  // not the spelling that is written
-		"demo2/step-500/manifest.json", // another workload
+		"demo/step-9-20261119T000000Z-0000abcd/manifest.json",
+		"demo/step-10-20261119T000000Z-0000abcd/manifest.json",
+		"demo/step-100-20261119T000000Z-0000abcd/manifest.json",
+		"demo/step-100-20261119T090000Z-0000abcd/manifest.json",  // a later attempt at step 100
+		"demo/notes/readme.txt",                                  // not a restore point folder
+		"demo/step-007-20261119T000000Z-0000abcd/manifest.json",  // not the spelling that is written
+		"demo/step-5/manifest.json",                              // no attempt
+		"demo2/step-500-20261119T000000Z-0000abcd/manifest.json", // another workload
 	)
 
-	got, err := Steps(bg, mem, "demo")
+	got, err := List(bg, mem, "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if want := []int{100, 10, 9}; !equalInts(got, want) {
-		t.Fatalf("Steps = %v, want %v: numeric order, newest first, and only real step folders", got, want)
+	var keys []string
+	for _, rp := range got {
+		keys = append(keys, rp.Key())
+	}
+	want := []string{
+		"demo/step-100-20261119T090000Z-0000abcd",
+		"demo/step-100-20261119T000000Z-0000abcd",
+		"demo/step-10-20261119T000000Z-0000abcd",
+		"demo/step-9-20261119T000000Z-0000abcd",
+	}
+	if !slices.Equal(keys, want) {
+		t.Fatalf("List = %v, want %v: numeric order, the latest attempt first, and only real restore point folders", keys, want)
 	}
 }
 
-func equalInts(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
+func TestNewestCompleteFindsTheNewestFolderWithAManifest(t *testing.T) {
+	mem := NewMemory()
+	publish(t, mem, "demo", 3)
+	putAll(t, mem, "demo/step-8-20261119T000000Z-0000abcd/app/app.pt") // cut off before the manifest
+
+	got, found, err := NewestComplete(bg, mem, "demo")
+
+	if err != nil || !found || got != at("demo", 3) {
+		t.Fatalf("NewestComplete = %+v, %v, %v; want step 3", got, found, err)
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+	if _, found, err := NewestComplete(bg, mem, "demo2"); err != nil || found {
+		t.Fatalf("NewestComplete for a workload with nothing stored = %v, %v; want not found", found, err)
 	}
-	return true
 }
 
 func TestFetchLatestPicksTheNewestRestorePoint(t *testing.T) {
@@ -66,8 +84,8 @@ func TestFetchLatestPicksTheNewestRestorePoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Step != 5 || got.Manifest.Step != 5 || got.Root != layout.LocalDir(base, "demo", 5) {
-		t.Fatalf("FetchLatest = step %d, manifest step %d, root %q; want step 5 in %q", got.Step, got.Manifest.Step, got.Root, layout.LocalDir(base, "demo", 5))
+	if got.Point != at("demo", 5) || got.Manifest.Step != 5 || got.Root != layout.LocalDir(base, "demo", 5) {
+		t.Fatalf("FetchLatest = %+v, manifest step %d, root %q; want step 5 in %q", got.Point, got.Manifest.Step, got.Root, layout.LocalDir(base, "demo", 5))
 	}
 	if len(got.Skipped) != 0 {
 		t.Fatalf("skipped %v, want nothing", got.Skipped)
@@ -78,17 +96,17 @@ func TestFetchLatestSkipsANewestFolderThatHasNoManifest(t *testing.T) {
 	// An upload that was cut off: files, but no manifest.
 	mem := NewMemory()
 	publish(t, mem, "demo", 3)
-	putAll(t, mem, "demo/step-8/app/app.pt")
+	putAll(t, mem, "demo/step-8-20261119T000000Z-0000abcd/app/app.pt")
 
 	got, err := FetchLatest(bg, mem, "demo", rootsUnder(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Step != 3 {
-		t.Fatalf("restored step %d, want 3: step 8 has no manifest", got.Step)
+	if got.Point.Step != 3 {
+		t.Fatalf("restored step %d, want 3: step 8 has no manifest", got.Point.Step)
 	}
-	if len(got.Skipped) != 1 || got.Skipped[0].Step != 8 || !errors.Is(got.Skipped[0].Reason, ErrBadRestorePoint) {
+	if len(got.Skipped) != 1 || got.Skipped[0].Point.Step != 8 || !errors.Is(got.Skipped[0].Reason, ErrBadRestorePoint) {
 		t.Fatalf("skipped = %+v, want step 8 as a bad restore point", got.Skipped)
 	}
 }
@@ -97,17 +115,17 @@ func TestFetchLatestSkipsACorruptNewestRestorePoint(t *testing.T) {
 	mem := NewMemory()
 	publish(t, mem, "demo", 3)
 	publish(t, mem, "demo", 5)
-	data, _ := mem.Data("demo/step-5/process/pages-1.img")
+	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img")
 	data[0] ^= 0xff
-	mem.Set("demo/step-5/process/pages-1.img", data)
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img", data)
 
 	got, err := FetchLatest(bg, mem, "demo", rootsUnder(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Step != 3 || len(got.Skipped) != 1 || got.Skipped[0].Step != 5 {
-		t.Fatalf("FetchLatest = step %d, skipped %+v; want step 3 after skipping the corrupt step 5", got.Step, got.Skipped)
+	if got.Point.Step != 3 || len(got.Skipped) != 1 || got.Skipped[0].Point.Step != 5 {
+		t.Fatalf("FetchLatest = step %d, skipped %+v; want step 3 after skipping the corrupt step 5", got.Point.Step, got.Skipped)
 	}
 }
 
@@ -115,15 +133,15 @@ func TestFetchLatestSkipsARestorePointWhoseListedFileIsMissing(t *testing.T) {
 	mem := NewMemory()
 	publish(t, mem, "demo", 3)
 	publish(t, mem, "demo", 5)
-	mem.Delete("demo/step-5/app/app.pt")
+	mem.Delete("demo/step-5-20261119T000000Z-0000abcd/app/app.pt")
 
 	got, err := FetchLatest(bg, mem, "demo", rootsUnder(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got.Step != 3 || !errors.Is(got.Skipped[0].Reason, ErrBadRestorePoint) {
-		t.Fatalf("FetchLatest = step %d, skipped %+v; want step 3, with step 5 a bad restore point", got.Step, got.Skipped)
+	if got.Point.Step != 3 || !errors.Is(got.Skipped[0].Reason, ErrBadRestorePoint) {
+		t.Fatalf("FetchLatest = step %d, skipped %+v; want step 3, with step 5 a bad restore point", got.Point.Step, got.Skipped)
 	}
 }
 
@@ -137,7 +155,7 @@ func TestFetchLatestWithNothingToRestore(t *testing.T) {
 
 func TestFetchLatestWhenEveryRestorePointIsBad(t *testing.T) {
 	mem := NewMemory()
-	putAll(t, mem, "demo/step-8/app/app.pt")
+	putAll(t, mem, "demo/step-8-20261119T000000Z-0000abcd/app/app.pt")
 
 	got, err := FetchLatest(bg, mem, "demo", rootsUnder(t.TempDir()))
 
@@ -177,26 +195,26 @@ func TestFetchLatestIgnoresOtherWorkloads(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Step != 3 {
-		t.Fatalf("restored step %d, want 3: demo2 is another workload", got.Step)
+	if got.Point.Step != 3 {
+		t.Fatalf("restored step %d, want 3: demo2 is another workload", got.Point.Step)
 	}
 }
 
 func TestFetchErrorsAboutTheRestorePointSaySo(t *testing.T) {
 	// A problem with the restore point itself is ErrBadRestorePoint. A problem reaching the store is not.
 	missingManifest := NewMemory()
-	putAll(t, missingManifest, "demo/step-5/app/app.pt")
+	putAll(t, missingManifest, "demo/step-5-20261119T000000Z-0000abcd/app/app.pt")
 
 	corrupt := NewMemory()
 	publish(t, corrupt, "demo", 5)
-	data, _ := corrupt.Data("demo/step-5/process/pages-1.img")
+	data, _ := corrupt.Data("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img")
 	data[0] ^= 0xff
-	corrupt.Set("demo/step-5/process/pages-1.img", data)
+	corrupt.Set("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img", data)
 
 	wrongStep := NewMemory()
 	publish(t, wrongStep, "demo", 5)
-	manifestBytes, _ := wrongStep.Data("demo/step-5/manifest.json")
-	wrongStep.Set("demo/step-6/manifest.json", manifestBytes)
+	manifestBytes, _ := wrongStep.Data("demo/step-5-20261119T000000Z-0000abcd/manifest.json")
+	wrongStep.Set("demo/step-6-20261119T000000Z-0000abcd/manifest.json", manifestBytes)
 
 	for name, c := range map[string]struct {
 		mem  *Memory
@@ -206,7 +224,7 @@ func TestFetchErrorsAboutTheRestorePointSaySo(t *testing.T) {
 		"a corrupt file":          {corrupt, 5},
 		"another step's manifest": {wrongStep, 6},
 	} {
-		if _, err := Fetch(bg, c.mem, "demo", c.step, t.TempDir()); !errors.Is(err, ErrBadRestorePoint) {
+		if _, err := Fetch(bg, c.mem, at("demo", c.step), t.TempDir()); !errors.Is(err, ErrBadRestorePoint) {
 			t.Errorf("%s: error = %v, want ErrBadRestorePoint", name, err)
 		}
 	}
@@ -214,7 +232,7 @@ func TestFetchErrorsAboutTheRestorePointSaySo(t *testing.T) {
 	unreachable := NewMemory()
 	publish(t, unreachable, "demo", 5)
 	unreachable.GetHook = func(key string) error { return errors.New("connection reset") }
-	if _, err := Fetch(bg, unreachable, "demo", 5, t.TempDir()); err == nil || errors.Is(err, ErrBadRestorePoint) {
+	if _, err := Fetch(bg, unreachable, at("demo", 5), t.TempDir()); err == nil || errors.Is(err, ErrBadRestorePoint) {
 		t.Errorf("a network error: error = %v, want a failure that is not ErrBadRestorePoint", err)
 	}
 }

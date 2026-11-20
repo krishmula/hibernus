@@ -298,11 +298,11 @@ func TestPublishAndFetchRoundTripThroughS3(t *testing.T) {
 	st := &S3{API: newFakeS3(), Bucket: "bucket", Prefix: "hib"}
 	root := makeRestorePoint(t, "demo", 5)
 
-	if err := Publish(bg, st, root); err != nil {
+	if err := Publish(bg, st, root, testAttempt); err != nil {
 		t.Fatal(err)
 	}
 	dest := t.TempDir() + "/restored"
-	if _, err := Fetch(bg, st, "demo", 5, dest); err != nil {
+	if _, err := Fetch(bg, st, at("demo", 5), dest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -316,15 +316,15 @@ func TestPublishAndFetchRoundTripThroughS3(t *testing.T) {
 func TestPublishRefusesAnS3ObjectThatNoPutWrote(t *testing.T) {
 	// Same size as the manifest says, but nobody recorded a checksum for it: not one of ours.
 	fake := newFakeS3()
-	fake.objects["bucket/demo/step-5/app/app.pt"] = fakeObject{data: []byte(strings.Repeat("x", 28))}
+	fake.objects["bucket/demo/step-5-20261119T000000Z-0000abcd/app/app.pt"] = fakeObject{data: []byte(strings.Repeat("x", 28))}
 	st := &S3{API: fake, Bucket: "bucket"}
 
-	err := Publish(bg, st, makeRestorePoint(t, "demo", 5))
+	err := Publish(bg, st, makeRestorePoint(t, "demo", 5), testAttempt)
 
 	if err == nil || !strings.Contains(err.Error(), "different content") {
 		t.Fatalf("Publish error = %v, want one that says the stored file has different content", err)
 	}
-	if _, ok := fake.objects["bucket/demo/step-5/manifest.json"]; ok {
+	if _, ok := fake.objects["bucket/demo/step-5-20261119T000000Z-0000abcd/manifest.json"]; ok {
 		t.Fatal("a manifest was stored over a file that was not ours")
 	}
 }

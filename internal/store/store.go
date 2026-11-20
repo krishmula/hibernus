@@ -6,7 +6,8 @@
 //   - Publish uploads every file, checks each one in the store, and uploads the manifest last.
 //     A key prefix without a manifest is not a restore point.
 //   - Stored files never change. Publishing the same restore point again is fine, and publishing
-//     different content under a key that is taken is an error.
+//     different content under a key that is taken is an error. So each checkpoint attempt
+//     publishes under its own folder, which no other attempt can have filled.
 //   - Fetch downloads the manifest first, checks every file against it, and installs the manifest
 //     last. A folder with a manifest is a verified restore point.
 package store
@@ -95,9 +96,10 @@ type Store interface {
 }
 
 // Publish stores the restore point in root, which must hold a manifest, under the manifest's own
-// workload and step. It checks every file in the store against the manifest, and stores the
-// manifest last. It is safe to call again after a failure or a success.
-func Publish(ctx context.Context, st Store, root string) error {
+// workload and step and the given attempt. It checks every file in the store against the
+// manifest, and stores the manifest last. It is safe to call again with the same attempt after a
+// failure or a success.
+func Publish(ctx context.Context, st Store, root, attempt string) error {
 	m, err := manifest.Load(root)
 	if err != nil {
 		return err
@@ -105,7 +107,7 @@ func Publish(ctx context.Context, st Store, root string) error {
 	if !layout.ValidWorkload(m.Workload) {
 		return fmt.Errorf("the manifest names workload %q, which is not a valid name", m.Workload)
 	}
-	prefix := layout.Key(m.Workload, m.Step)
+	prefix := layout.RestorePoint{Workload: m.Workload, Step: m.Step, Attempt: attempt}.Key()
 
 	for _, f := range layerFiles(m) {
 		if !filepath.IsLocal(f.Path) {
@@ -147,14 +149,14 @@ func putVerified(ctx context.Context, st Store, key, src string, want Object) er
 		ErrConflict, key, got.Size, got.Sha256, want.Size, want.Sha256)
 }
 
-// Fetch downloads the restore point of workload at step into root and returns its manifest. It
-// downloads the manifest first, refuses a location that has none, checks every file against it,
-// and moves the manifest into root last, so root holds a manifest only when its files are verified.
-func Fetch(ctx context.Context, st Store, workload string, step int, root string) (manifest.Manifest, error) {
-	if !layout.ValidWorkload(workload) {
-		return manifest.Manifest{}, fmt.Errorf("%q is not a valid workload name", workload)
+// Fetch downloads the restore point rp into root and returns its manifest. It downloads the
+// manifest first, refuses a location that has none, checks every file against it, and moves the
+// manifest into root last, so root holds a manifest only when its files are verified.
+func Fetch(ctx context.Context, st Store, rp layout.RestorePoint, root string) (manifest.Manifest, error) {
+	if !layout.ValidWorkload(rp.Workload) {
+		return manifest.Manifest{}, fmt.Errorf("%q is not a valid workload name", rp.Workload)
 	}
-	prefix := layout.Key(workload, step)
+	workload, step, prefix := rp.Workload, rp.Step, rp.Key()
 
 	// A manifest left in root by an earlier attempt must not make this folder look complete.
 	if err := os.Remove(filepath.Join(root, manifest.FileName)); err != nil && !errors.Is(err, os.ErrNotExist) {

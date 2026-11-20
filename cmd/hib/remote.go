@@ -29,21 +29,33 @@ func parseRemoteFlag(value string) (string, error) {
 	return bucket, nil
 }
 
-// remoteFor makes the Supervisor's remote for a bucket: where a checkpoint is published, and the
-// address that hib checkpoint prints.
+// remoteFor makes the Supervisor's remote for a bucket, where a checkpoint is published.
 func remoteFor(ctx context.Context, bucket string) (*supervisor.Remote, error) {
 	st, err := openBucket(ctx, bucket)
 	if err != nil {
 		return nil, err
 	}
-	return &supervisor.Remote{
-		Store:    st,
-		Location: func(workload string, step int) string { return layout.S3URL(bucket, workload, step) },
-	}, nil
+	return &supervisor.Remote{Store: st, Bucket: bucket}, nil
+}
+
+// refuseTakenWorkload returns an error when the bucket already holds a complete restore point of
+// workload. A fresh hib run under that name would mix its restore points with the old run's, and
+// s3://<bucket>/<workload>/ could then restore the old run.
+func refuseTakenWorkload(ctx context.Context, remote *supervisor.Remote, workload string) error {
+	rp, found, err := store.NewestComplete(ctx, remote.Store, workload)
+	if err != nil {
+		return fmt.Errorf("check s3://%s/%s/ for earlier restore points: %w", remote.Bucket, workload, err)
+	}
+	if found {
+		rp.Bucket = remote.Bucket
+		return fmt.Errorf("s3://%s/%s/ already holds restore point %s from an earlier run; choose another --workload, or continue that run with hib restore s3://%s/%s/",
+			remote.Bucket, workload, rp.S3URL(), remote.Bucket, workload)
+	}
+	return nil
 }
 
 // locateRestorePoint returns the local folder that holds the restore point named by arg. A folder
-// is used as it is. An s3://<bucket>/<workload>/step-<K>/ location is downloaded and verified into
+// is used as it is. An s3://<bucket>/<workload>/step-<K>-<attempt>/ location is downloaded and verified into
 // the store folder. An s3://<bucket>/<workload>/ location means the newest restore point of that
 // workload: the newest one that downloads and verifies, passing over any that is incomplete or
 // corrupt. For both, the remote it came from is returned too, so a restored workload that is
@@ -59,7 +71,7 @@ func locateRestorePoint(ctx context.Context, arg, storeDir string) (string, *sup
 			return "", nil, err
 		}
 		root := layout.LocalDir(storeDir, rp.Workload, rp.Step)
-		if _, err := store.Fetch(ctx, remote.Store, rp.Workload, rp.Step, root); err != nil {
+		if _, err := store.Fetch(ctx, remote.Store, rp, root); err != nil {
 			return "", nil, fmt.Errorf("download %s: %w", arg, err)
 		}
 		return root, remote, nil
@@ -77,11 +89,12 @@ func locateRestorePoint(ctx context.Context, arg, storeDir string) (string, *sup
 		return layout.LocalDir(storeDir, workload, step)
 	})
 	for _, skip := range latest.Skipped {
-		fmt.Fprintf(os.Stderr, "hib restore: passed over step %d: %v\n", skip.Step, skip.Reason)
+		fmt.Fprintf(os.Stderr, "hib restore: passed over %s: %v\n", skip.Point.Key(), skip.Reason)
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("find the newest restore point of %s in s3://%s: %w", workload, bucket, err)
 	}
-	fmt.Fprintf(os.Stderr, "hib restore: the newest usable restore point is step %d\n", latest.Step)
+	latest.Point.Bucket = bucket
+	fmt.Fprintf(os.Stderr, "hib restore: the newest usable restore point is %s\n", latest.Point.S3URL())
 	return latest.Root, remote, nil
 }

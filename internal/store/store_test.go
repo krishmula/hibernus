@@ -13,10 +13,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krishmula/hibernus/internal/layout"
 	"github.com/krishmula/hibernus/internal/manifest"
 )
 
 var bg = context.Background()
+
+// testAttempt is the checkpoint attempt that the tests publish under.
+const testAttempt = "20261119T000000Z-0000abcd"
+
+// at names the restore point of workload at step, published under testAttempt.
+func at(workload string, step int) layout.RestorePoint {
+	return layout.RestorePoint{Workload: workload, Step: step, Attempt: testAttempt}
+}
 
 func writeFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
@@ -256,7 +265,7 @@ func TestPublishPutsTheManifestLast(t *testing.T) {
 	mem := NewMemory()
 	root := makeRestorePoint(t, "demo", 5)
 
-	if err := Publish(bg, mem, root); err != nil {
+	if err := Publish(bg, mem, root, testAttempt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,24 +273,24 @@ func TestPublishPutsTheManifestLast(t *testing.T) {
 	if len(puts) != 3 {
 		t.Fatalf("stored %v, want 3 files", puts)
 	}
-	if last := puts[len(puts)-1]; last != "demo/step-5/manifest.json" {
+	if last := puts[len(puts)-1]; last != "demo/step-5-20261119T000000Z-0000abcd/manifest.json" {
 		t.Fatalf("the last file stored was %q, want the manifest", last)
 	}
 	rest := slices.Clone(puts[:len(puts)-1])
 	slices.Sort(rest)
-	if want := []string{"demo/step-5/app/app.pt", "demo/step-5/process/pages-1.img"}; !slices.Equal(rest, want) {
+	if want := []string{"demo/step-5-20261119T000000Z-0000abcd/app/app.pt", "demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img"}; !slices.Equal(rest, want) {
 		t.Fatalf("stored %v before the manifest, want %v", rest, want)
 	}
 }
 
 func TestPublishNamesTheFilesFromTheManifestsWorkloadAndStep(t *testing.T) {
 	mem := NewMemory()
-	if err := Publish(bg, mem, makeRestorePoint(t, "run-2", 1200)); err != nil {
+	if err := Publish(bg, mem, makeRestorePoint(t, "run-2", 1200), testAttempt); err != nil {
 		t.Fatal(err)
 	}
 
 	for _, key := range mem.Puts() {
-		if !strings.HasPrefix(key, "run-2/step-1200/") {
+		if !strings.HasPrefix(key, "run-2/step-1200-20261119T000000Z-0000abcd/") {
 			t.Errorf("key %q is not under run-2/step-1200/", key)
 		}
 	}
@@ -292,7 +301,7 @@ func TestPublishRefusesAFolderWithoutAManifest(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "app/app.pt", "bytes")
 
-	if err := Publish(bg, mem, root); err == nil {
+	if err := Publish(bg, mem, root, testAttempt); err == nil {
 		t.Fatal("Publish of a folder without a manifest succeeded")
 	}
 	if puts := mem.Puts(); len(puts) != 0 {
@@ -309,11 +318,11 @@ func TestAFailedUploadLeavesNoManifestInTheStore(t *testing.T) {
 		return nil
 	}
 
-	if err := Publish(bg, mem, makeRestorePoint(t, "demo", 5)); err == nil {
+	if err := Publish(bg, mem, makeRestorePoint(t, "demo", 5), testAttempt); err == nil {
 		t.Fatal("Publish succeeded although an upload failed")
 	}
 
-	if _, err := mem.Stat(bg, "demo/step-5/manifest.json"); !errors.Is(err, ErrNotFound) {
+	if _, err := mem.Stat(bg, "demo/step-5-20261119T000000Z-0000abcd/manifest.json"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("the store holds a manifest after a failed upload (%v): a half-uploaded restore point would look complete", err)
 	}
 }
@@ -329,15 +338,15 @@ func TestPublishCanBeRetriedAfterAFailure(t *testing.T) {
 		return nil
 	}
 	root := makeRestorePoint(t, "demo", 5)
-	if err := Publish(bg, mem, root); err == nil {
+	if err := Publish(bg, mem, root, testAttempt); err == nil {
 		t.Fatal("the first Publish should have failed")
 	}
 
-	if err := Publish(bg, mem, root); err != nil { // app.pt is already stored, and that is fine
+	if err := Publish(bg, mem, root, testAttempt); err != nil { // app.pt is already stored, and that is fine
 		t.Fatalf("the retry failed: %v", err)
 	}
 
-	if _, err := mem.Stat(bg, "demo/step-5/manifest.json"); err != nil {
+	if _, err := mem.Stat(bg, "demo/step-5-20261119T000000Z-0000abcd/manifest.json"); err != nil {
 		t.Fatalf("no manifest after the retry: %v", err)
 	}
 }
@@ -346,24 +355,24 @@ func TestPublishingTheSameRestorePointTwiceIsFine(t *testing.T) {
 	mem := NewMemory()
 	root := makeRestorePoint(t, "demo", 5)
 
-	if err := Publish(bg, mem, root); err != nil {
+	if err := Publish(bg, mem, root, testAttempt); err != nil {
 		t.Fatal(err)
 	}
-	if err := Publish(bg, mem, root); err != nil {
+	if err := Publish(bg, mem, root, testAttempt); err != nil {
 		t.Fatalf("the second Publish failed: %v", err)
 	}
 }
 
 func TestPublishRefusesToChangeAFileThatIsAlreadyStored(t *testing.T) {
 	mem := NewMemory()
-	mem.Set("demo/step-5/app/app.pt", []byte("someone else's bytes"))
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/app/app.pt", []byte("someone else's bytes"))
 
-	err := Publish(bg, mem, makeRestorePoint(t, "demo", 5))
+	err := Publish(bg, mem, makeRestorePoint(t, "demo", 5), testAttempt)
 
 	if err == nil || !strings.Contains(err.Error(), "different content") {
 		t.Fatalf("Publish error = %v, want one that says the stored file has different content", err)
 	}
-	if _, statErr := mem.Stat(bg, "demo/step-5/manifest.json"); !errors.Is(statErr, ErrNotFound) {
+	if _, statErr := mem.Stat(bg, "demo/step-5-20261119T000000Z-0000abcd/manifest.json"); !errors.Is(statErr, ErrNotFound) {
 		t.Fatalf("a manifest was stored over a conflicting file (%v)", statErr)
 	}
 }
@@ -377,11 +386,11 @@ func TestPublishCatchesAnUploadThatArrivedCorrupted(t *testing.T) {
 		return data
 	}
 
-	if err := Publish(bg, mem, makeRestorePoint(t, "demo", 5)); err == nil {
+	if err := Publish(bg, mem, makeRestorePoint(t, "demo", 5), testAttempt); err == nil {
 		t.Fatal("Publish succeeded although a stored file differs from the manifest")
 	}
 
-	if _, err := mem.Stat(bg, "demo/step-5/manifest.json"); !errors.Is(err, ErrNotFound) {
+	if _, err := mem.Stat(bg, "demo/step-5-20261119T000000Z-0000abcd/manifest.json"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a manifest was stored after a corrupted upload (%v)", err)
 	}
 }
@@ -391,12 +400,12 @@ func TestPublishRefusesAFileThatChangedAfterTheManifestWasWritten(t *testing.T) 
 	root := makeRestorePoint(t, "demo", 5)
 	writeFile(t, root, "app/app.pt", "application checkpoint BYTES") // same length as before, other bytes
 
-	err := Publish(bg, mem, root)
+	err := Publish(bg, mem, root, testAttempt)
 
 	if !errors.Is(err, ErrMismatch) {
 		t.Fatalf("Publish error = %v, want ErrMismatch", err)
 	}
-	if _, statErr := mem.Stat(bg, "demo/step-5/manifest.json"); !errors.Is(statErr, ErrNotFound) {
+	if _, statErr := mem.Stat(bg, "demo/step-5-20261119T000000Z-0000abcd/manifest.json"); !errors.Is(statErr, ErrNotFound) {
 		t.Fatalf("a manifest was stored for a restore point whose file changed (%v)", statErr)
 	}
 }
@@ -405,7 +414,7 @@ func TestPublishRefusesAFileThatChangedAfterTheManifestWasWritten(t *testing.T) 
 
 func publish(t *testing.T, mem *Memory, workload string, step int) {
 	t.Helper()
-	if err := Publish(bg, mem, makeRestorePoint(t, workload, step)); err != nil {
+	if err := Publish(bg, mem, makeRestorePoint(t, workload, step), testAttempt); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -415,7 +424,7 @@ func TestFetchBringsBackWhatPublishStored(t *testing.T) {
 	publish(t, mem, "demo", 5)
 	dest := filepath.Join(t.TempDir(), "restored")
 
-	m, err := Fetch(bg, mem, "demo", 5, dest)
+	m, err := Fetch(bg, mem, at("demo", 5), dest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,10 +456,10 @@ func TestFetchBringsBackWhatPublishStored(t *testing.T) {
 
 func TestFetchRefusesALocationWithoutAManifest(t *testing.T) {
 	mem := NewMemory()
-	mem.Set("demo/step-5/app/app.pt", []byte("bytes")) // files, but the upload never finished
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/app/app.pt", []byte("bytes")) // files, but the upload never finished
 	dest := filepath.Join(t.TempDir(), "restored")
 
-	_, err := Fetch(bg, mem, "demo", 5, dest)
+	_, err := Fetch(bg, mem, at("demo", 5), dest)
 
 	if err == nil || !strings.Contains(err.Error(), "not a complete restore point") {
 		t.Fatalf("Fetch error = %v, want one that says it is not a complete restore point", err)
@@ -461,12 +470,12 @@ func TestFetchRefusesALocationWithoutAManifest(t *testing.T) {
 func TestFetchRefusesACorruptFileAndLeavesNoManifest(t *testing.T) {
 	mem := NewMemory()
 	publish(t, mem, "demo", 5)
-	data, _ := mem.Data("demo/step-5/process/pages-1.img")
+	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img")
 	data[0] ^= 0xff
-	mem.Set("demo/step-5/process/pages-1.img", data)
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img", data)
 	dest := filepath.Join(t.TempDir(), "restored")
 
-	if _, err := Fetch(bg, mem, "demo", 5, dest); err == nil {
+	if _, err := Fetch(bg, mem, at("demo", 5), dest); err == nil {
 		t.Fatal("Fetch succeeded with a corrupted file")
 	}
 
@@ -477,7 +486,7 @@ func TestFetchRemovesAManifestLeftByAnEarlierAttempt(t *testing.T) {
 	dest := t.TempDir()
 	writeFile(t, dest, manifest.FileName, "an old manifest")
 
-	if _, err := Fetch(bg, NewMemory(), "demo", 5, dest); err == nil {
+	if _, err := Fetch(bg, NewMemory(), at("demo", 5), dest); err == nil {
 		t.Fatal("Fetch from an empty store succeeded")
 	}
 
@@ -487,10 +496,10 @@ func TestFetchRemovesAManifestLeftByAnEarlierAttempt(t *testing.T) {
 func TestFetchRefusesAManifestThatBelongsToAnotherStep(t *testing.T) {
 	mem := NewMemory()
 	publish(t, mem, "demo", 5)
-	data, _ := mem.Data("demo/step-5/manifest.json")
-	mem.Set("demo/step-6/manifest.json", data) // step 5's manifest, filed under step 6
+	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/manifest.json")
+	mem.Set("demo/step-6-20261119T000000Z-0000abcd/manifest.json", data) // step 5's manifest, filed under step 6
 
-	_, err := Fetch(bg, mem, "demo", 6, filepath.Join(t.TempDir(), "restored"))
+	_, err := Fetch(bg, mem, at("demo", 6), filepath.Join(t.TempDir(), "restored"))
 
 	if err == nil || !strings.Contains(err.Error(), "step 5") {
 		t.Fatalf("Fetch error = %v, want one that names step 5", err)
@@ -510,12 +519,12 @@ func TestFetchRefusesAManifestThatListsAFileOutsideTheFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mem.Set("demo/step-5/manifest.json", data)
-	mem.Set("demo/step-5/../escape", []byte("x"))
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/manifest.json", data)
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/../escape", []byte("x"))
 	parent := t.TempDir()
 	dest := filepath.Join(parent, "restored")
 
-	if _, err := Fetch(bg, mem, "demo", 5, dest); err == nil {
+	if _, err := Fetch(bg, mem, at("demo", 5), dest); err == nil {
 		t.Fatal("Fetch accepted a file outside the restore point")
 	}
 

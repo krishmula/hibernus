@@ -30,12 +30,10 @@ type Config struct {
 	Remote *Remote
 }
 
-// Remote is durable storage for restore points, such as an S3 bucket.
+// Remote is durable storage for restore points: an S3 bucket.
 type Remote struct {
-	Store store.Store
-	// Location is the address of a published restore point, such as s3://bucket/workload/step-1200/.
-	// hib checkpoint prints it, and hib restore takes it.
-	Location func(workload string, step int) string
+	Store  store.Store
+	Bucket string // names the published restore point in what hib checkpoint prints
 }
 
 type Supervisor struct {

@@ -41,9 +41,9 @@ func TestPermanent(t *testing.T) {
 
 func TestPublishConflictsAreErrConflict(t *testing.T) {
 	mem := NewMemory()
-	mem.Set("demo/step-5/app/app.pt", []byte("someone else's bytes"))
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/app/app.pt", []byte("someone else's bytes"))
 
-	err := Publish(bg, mem, makeRestorePoint(t, "demo", 5))
+	err := Publish(bg, mem, makeRestorePoint(t, "demo", 5), testAttempt)
 
 	if !errors.Is(err, ErrConflict) || !Permanent(err) {
 		t.Fatalf("Publish error = %v, want an ErrConflict that is permanent", err)
@@ -57,7 +57,7 @@ func TestACorruptedUploadIsErrConflict(t *testing.T) {
 		return data
 	}
 
-	err := Publish(bg, mem, makeRestorePoint(t, "demo", 5))
+	err := Publish(bg, mem, makeRestorePoint(t, "demo", 5), testAttempt)
 
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("Publish error = %v, want ErrConflict: the stored file cannot be replaced, so a retry cannot fix it", err)

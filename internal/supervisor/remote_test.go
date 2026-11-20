@@ -3,6 +3,8 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -27,11 +29,22 @@ func remoteConfig(t *testing.T, mem *store.Memory) Config {
 	return Config{
 		Workload: "w",
 		Store:    t.TempDir(),
-		Remote: &Remote{
-			Store:    mem,
-			Location: func(workload string, step int) string { return layout.S3URL("test-bucket", workload, step) },
-		},
+		Remote:   &Remote{Store: mem, Bucket: "test-bucket"},
 	}
+}
+
+// publishedAt reads the restore point that hib checkpoint printed, and checks that it is
+// workload w at step in test-bucket.
+func publishedAt(t *testing.T, location string, step int) layout.RestorePoint {
+	t.Helper()
+	rp, err := layout.ParseS3URL(location)
+	if err != nil {
+		t.Fatalf("location %q: %v", location, err)
+	}
+	if rp.Bucket != "test-bucket" || rp.Workload != "w" || rp.Step != step {
+		t.Fatalf("location %q, want workload w at step %d in test-bucket", location, step)
+	}
+	return rp
 }
 
 func remoteSupervisor(t *testing.T, mem *store.Memory) (*Supervisor, string) {
@@ -92,12 +105,13 @@ func TestACheckpointIsPublishedBeforeItIsDone(t *testing.T) {
 
 	answer := receive(t, checkpointOnce(t, path, 5*time.Second))
 
-	want := layout.S3URL("test-bucket", "w", 2)
-	if !answer.OK || answer.Location != want {
-		t.Fatalf("checkpoint = %+v, want ok at %s", answer, want)
+	if !answer.OK {
+		t.Fatalf("checkpoint = %+v, want ok", answer)
 	}
+	want := answer.Location
+	key := publishedAt(t, want, 2).Key()
 	puts := mem.Puts()
-	if wantPuts := []string{"w/step-2/app/step.json", "w/step-2/manifest.json"}; !slices.Equal(puts, wantPuts) {
+	if wantPuts := []string{key + "/app/step.json", key + "/manifest.json"}; !slices.Equal(puts, wantPuts) {
 		t.Fatalf("stored %v, want %v: the files first, the manifest last", puts, wantPuts)
 	}
 	got := status(t, path)
@@ -150,7 +164,7 @@ func TestATemporaryUploadFailureIsRetried(t *testing.T) {
 	if calls.Load() <= 2 {
 		t.Fatalf("Put was called %d times, want more than the 2 that failed", calls.Load())
 	}
-	if _, err := mem.Stat(bg, "w/step-2/manifest.json"); err != nil {
+	if _, err := mem.Stat(bg, publishedAt(t, answer.Location, 2).Key()+"/manifest.json"); err != nil {
 		t.Fatalf("no manifest in the store after the retries: %v", err)
 	}
 }
@@ -200,8 +214,8 @@ func TestTheDeadlineDuringTheUploadFailsTheCheckpointAndLeavesNoManifest(t *test
 
 	release()
 	sup.Settle() // the upload ends once it is let go
-	if _, err := mem.Stat(bg, "w/step-2/manifest.json"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("a manifest reached the store after the deadline (%v): the restore point would look complete", err)
+	if rp, found, err := store.NewestComplete(bg, mem, "w"); err != nil || found {
+		t.Fatalf("a manifest reached the store after the deadline (%s, %v): the restore point would look complete", rp.Key(), err)
 	}
 	if got := status(t, path); got.State != "Failed" {
 		t.Fatalf("state after the upload ended = %s, want it to stay Failed", got.State)
@@ -256,5 +270,45 @@ func TestWithoutARemoteTheLocalFolderIsTheLocation(t *testing.T) {
 
 	if !answer.OK || strings.HasPrefix(answer.Location, "s3://") {
 		t.Fatalf("checkpoint = %+v, want a local folder", answer)
+	}
+}
+
+func TestACheckpointAtTheStepOfACutOffUploadIsPublished(t *testing.T) {
+	// The first attempt's upload stops before the manifest, and IAM grants no delete, so its
+	// files stay in the store.
+	mem := store.NewMemory()
+	mem.PutHook = func(key string) error {
+		if strings.HasSuffix(key, "manifest.json") {
+			return &smithy.GenericAPIError{Code: "AccessDenied", Message: "cut off"}
+		}
+		return nil
+	}
+	_, first := remoteSupervisor(t, mem)
+	if reply := receive(t, checkpointOnce(t, first, 5*time.Second)); reply.OK {
+		t.Fatalf("first checkpoint = %+v, want it to fail before the manifest", reply)
+	}
+	mem.PutHook = nil
+
+	// A restored workload reaches the same step with different training state.
+	_, second := remoteSupervisor(t, mem)
+	answer := requestCheckpoint(t, second, 5*time.Second)
+	waitForState(t, second, "Checkpointing")
+	reply := boundary(t, second, 2)
+	file := filepath.Join(reply.Dir, "step.json")
+	if err := os.WriteFile(file, []byte(`{"step": 2, "restored": true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tell(t, second, protocol.Request{Op: "app_checkpoint", Files: []string{file}})
+
+	if got := receive(t, answer); !got.OK {
+		t.Fatalf("second checkpoint = %+v, want ok: the cut-off upload must not block it", got)
+	}
+	latest, err := store.FetchLatest(bg, mem, "w", func(step int) string { return filepath.Join(t.TempDir(), "w") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(latest.Root, "app", "step.json"))
+	if err != nil || string(data) != `{"step": 2, "restored": true}` {
+		t.Fatalf("the newest restore point holds %q, %v; want the second checkpoint's file", data, err)
 	}
 }

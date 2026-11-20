@@ -15,6 +15,14 @@ import (
 
 var bg = context.Background()
 
+// testAttempt is the checkpoint attempt that publishedRestorePoint publishes under.
+const testAttempt = "20261119T000000Z-0000abcd"
+
+// s3URL is where publishedRestorePoint put workload's restore point at step in test-bucket.
+func s3URL(workload string, step int) string {
+	return layout.RestorePoint{Bucket: "test-bucket", Workload: workload, Step: step, Attempt: testAttempt}.S3URL()
+}
+
 // useMemoryBucket makes hib open an in-memory store, in place of S3, and records the bucket it was asked for.
 func useMemoryBucket(t *testing.T, mem *store.Memory) *string {
 	t.Helper()
@@ -58,7 +66,7 @@ func publishedRestorePoint(t *testing.T, mem *store.Memory, workload string, ste
 	if err := manifest.Write(root, m); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Publish(bg, mem, root); err != nil {
+	if err := store.Publish(bg, mem, root, testAttempt); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -95,8 +103,8 @@ func TestRemoteForAddressesRestorePointsInTheBucket(t *testing.T) {
 	if *asked != "my-bucket" {
 		t.Fatalf("opened bucket %q, want my-bucket", *asked)
 	}
-	if got, want := remote.Location("demo", 1200), layout.S3URL("my-bucket", "demo", 1200); got != want {
-		t.Fatalf("Location = %q, want %q", got, want)
+	if remote.Bucket != "my-bucket" {
+		t.Fatalf("Bucket = %q, want my-bucket", remote.Bucket)
 	}
 }
 
@@ -116,7 +124,7 @@ func TestAnS3LocationIsDownloadedIntoTheStore(t *testing.T) {
 	asked := useMemoryBucket(t, mem)
 	storeDir := t.TempDir()
 
-	root, remote, err := locateRestorePoint(bg, "s3://test-bucket/demo/step-5/", storeDir)
+	root, remote, err := locateRestorePoint(bg, s3URL("demo", 5), storeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +143,7 @@ func TestAnS3LocationIsDownloadedIntoTheStore(t *testing.T) {
 		t.Fatalf("the downloaded files do not verify: %v", err)
 	}
 	// The restored workload can be checkpointed again, into the same bucket.
-	if remote == nil || remote.Location("demo", 9) != layout.S3URL("test-bucket", "demo", 9) {
+	if remote == nil || remote.Bucket != "test-bucket" {
 		t.Fatalf("remote = %+v, want one that publishes to test-bucket", remote)
 	}
 }
@@ -144,7 +152,7 @@ func TestAnS3LocationWithNoRestorePointIsRefused(t *testing.T) {
 	useMemoryBucket(t, store.NewMemory())
 	storeDir := t.TempDir()
 
-	_, _, err := locateRestorePoint(bg, "s3://test-bucket/demo/step-5/", storeDir)
+	_, _, err := locateRestorePoint(bg, s3URL("demo", 5), storeDir)
 
 	if err == nil || !strings.Contains(err.Error(), "not a complete restore point") {
 		t.Fatalf("error = %v, want one that says it is not a complete restore point", err)
@@ -185,7 +193,7 @@ func TestAWorkloadLocationSkipsANewestRestorePointThatIsIncomplete(t *testing.T)
 	mem := store.NewMemory()
 	publishedRestorePoint(t, mem, "demo", 3)
 	// An upload that was cut off at step 8: a file, but no manifest.
-	mem.Set("demo/step-8/app/app.pt", []byte("half"))
+	mem.Set("demo/step-8-20261119T090000Z-0000abcd/app/app.pt", []byte("half"))
 	useMemoryBucket(t, mem)
 	storeDir := t.TempDir()
 
@@ -212,7 +220,7 @@ func TestAWorkloadLocationWithNoRestorePointIsRefused(t *testing.T) {
 func TestAMalformedS3LocationIsRefusedBeforeAnythingIsOpened(t *testing.T) {
 	asked := useMemoryBucket(t, store.NewMemory())
 
-	for _, location := range []string{"s3://test-bucket", "s3://test-bucket/demo/step-007/", "s3://Bad_Bucket/demo/step-5/", "s3://Bad_Bucket/demo/", "s3://test-bucket/demo/step-5/app/app.pt"} {
+	for _, location := range []string{"s3://test-bucket", "s3://test-bucket/demo/step-5/", "s3://test-bucket/demo/step-007-" + testAttempt + "/", "s3://Bad_Bucket/demo/step-5-" + testAttempt + "/", "s3://Bad_Bucket/demo/", s3URL("demo", 5) + "app/app.pt"} {
 		if _, _, err := locateRestorePoint(bg, location, t.TempDir()); err == nil {
 			t.Errorf("locateRestorePoint(%q) succeeded, want an error", location)
 		}
@@ -225,5 +233,46 @@ func TestAMalformedS3LocationIsRefusedBeforeAnythingIsOpened(t *testing.T) {
 func TestRunRefusesABadRemoteBeforeStartingAnything(t *testing.T) {
 	if code := runCommand([]string{"--remote", "not-an-s3-address", "echo", "hi"}); code != exitBadCommand {
 		t.Fatalf("hib run with a bad --remote exited %d, want %d", code, exitBadCommand)
+	}
+}
+
+// runWithRemote runs hib run --remote s3://test-bucket for workload, with a command that leaves a
+// file behind, and reports its exit code and whether the training command ran.
+func runWithRemote(t *testing.T, workload string) (int, bool) {
+	t.Helper()
+	runDir, err := os.MkdirTemp("", "hib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runDir) })
+	t.Setenv("HIB_RUN_DIR", runDir)
+	marker := filepath.Join(t.TempDir(), "ran")
+	code := runCommand([]string{"--remote", "s3://test-bucket", "--workload", workload, "--store", t.TempDir(), "sh", "-c", "touch " + marker})
+	_, statErr := os.Stat(marker)
+	return code, statErr == nil
+}
+
+func TestRunRefusesAWorkloadThatAlreadyHasARestorePoint(t *testing.T) {
+	mem := store.NewMemory()
+	publishedRestorePoint(t, mem, "demo", 5)
+	useMemoryBucket(t, mem)
+
+	code, ran := runWithRemote(t, "demo")
+
+	if code != exitFailed || ran {
+		t.Fatalf("hib run exited %d and ran the command: %v; want %d before anything starts", code, ran, exitFailed)
+	}
+}
+
+func TestRunStartsAWorkloadWhoseOnlyUploadWasCutOff(t *testing.T) {
+	mem := store.NewMemory()
+	publishedRestorePoint(t, mem, "other", 5)
+	mem.Set("demo/step-8-20261119T090000Z-0000abcd/app/app.pt", []byte("half"))
+	useMemoryBucket(t, mem)
+
+	code, ran := runWithRemote(t, "demo")
+
+	if code != exitOK || !ran {
+		t.Fatalf("hib run exited %d and ran the command: %v; want %d and the command run", code, ran, exitOK)
 	}
 }

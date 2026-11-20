@@ -177,9 +177,10 @@ func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
 		s.markCheckpointed(a, a.root, m)
 		return
 	}
+	rp := layout.RestorePoint{Bucket: s.cfg.Remote.Bucket, Workload: m.Workload, Step: m.Step, Attempt: layout.NewAttempt(time.Now())}
 	s.uploading = true
 	s.work.Add(1)
-	go s.publish(a, m)
+	go s.publish(a, rp, m)
 }
 
 // markCheckpointed records a finished restore point and answers every hib checkpoint that waits.
@@ -188,14 +189,14 @@ func (s *Supervisor) markCheckpointed(a *attempt, location string, m manifest.Ma
 	a.resolve(protocol.CheckpointReply{OK: true, Location: location, Manifest: &m})
 }
 
-// publish uploads the attempt's restore point to the remote, and then finishes or fails the
+// publish uploads the attempt's restore point to the remote as rp, and then finishes or fails the
 // checkpoint. It runs without the lock: an upload can take minutes, and meanwhile hib status and
 // the deadline timer need the lock.
-func (s *Supervisor) publish(a *attempt, m manifest.Manifest) {
+func (s *Supervisor) publish(a *attempt, rp layout.RestorePoint, m manifest.Manifest) {
 	defer s.work.Done()
 	ctx, cancel := context.WithDeadline(context.Background(), a.deadline)
 	defer cancel()
-	err := publishWithRetry(ctx, s.cfg.Remote.Store, a.root)
+	err := publishWithRetry(ctx, s.cfg.Remote.Store, a.root, rp.Attempt)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -205,7 +206,7 @@ func (s *Supervisor) publish(a *attempt, m manifest.Manifest) {
 	}
 	switch {
 	case err == nil:
-		s.markCheckpointed(a, s.cfg.Remote.Location(m.Workload, m.Step), m)
+		s.markCheckpointed(a, rp.S3URL(), m)
 	case ctx.Err() != nil:
 		s.fail("the deadline arrived before the restore point was uploaded: " + err.Error())
 	default:
@@ -216,10 +217,10 @@ func (s *Supervisor) publish(a *attempt, m manifest.Manifest) {
 // publishWithRetry publishes until it works, the context ends, or an error comes that waiting
 // cannot fix, such as a wrong credential. Publish is safe to repeat: a file that is already stored
 // with the same content is accepted.
-func publishWithRetry(ctx context.Context, st store.Store, root string) error {
+func publishWithRetry(ctx context.Context, st store.Store, root, attempt string) error {
 	wait := retryWait
 	for {
-		err := store.Publish(ctx, st, root)
+		err := store.Publish(ctx, st, root, attempt)
 		if err == nil || store.Permanent(err) || ctx.Err() != nil {
 			return err
 		}

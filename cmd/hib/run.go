@@ -78,6 +78,10 @@ func runCommand(args []string) int {
 			fmt.Fprintf(os.Stderr, "hib run: open the bucket: %v\n", err)
 			return exitFailed
 		}
+		if err := refuseTakenWorkload(context.Background(), remote, *workload); err != nil {
+			fmt.Fprintf(os.Stderr, "hib run: %v\n", err)
+			return exitFailed
+		}
 		cfg.Remote = remote
 	}
 	return supervise(cfg, nil)
