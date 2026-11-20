@@ -115,9 +115,9 @@ func TestFetchLatestSkipsACorruptNewestRestorePoint(t *testing.T) {
 	mem := NewMemory()
 	publish(t, mem, "demo", 3)
 	publish(t, mem, "demo", 5)
-	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img")
+	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/app/app.pt")
 	data[0] ^= 0xff
-	mem.Set("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img", data)
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/app/app.pt", data)
 
 	got, err := FetchLatest(bg, mem, "demo", rootsUnder(t.TempDir()))
 	if err != nil {
@@ -207,9 +207,9 @@ func TestFetchErrorsAboutTheRestorePointSaySo(t *testing.T) {
 
 	corrupt := NewMemory()
 	publish(t, corrupt, "demo", 5)
-	data, _ := corrupt.Data("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img")
+	data, _ := corrupt.Data("demo/step-5-20261119T000000Z-0000abcd/app/app.pt")
 	data[0] ^= 0xff
-	corrupt.Set("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img", data)
+	corrupt.Set("demo/step-5-20261119T000000Z-0000abcd/app/app.pt", data)
 
 	wrongStep := NewMemory()
 	publish(t, wrongStep, "demo", 5)

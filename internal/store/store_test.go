@@ -470,9 +470,9 @@ func TestFetchRefusesALocationWithoutAManifest(t *testing.T) {
 func TestFetchRefusesACorruptFileAndLeavesNoManifest(t *testing.T) {
 	mem := NewMemory()
 	publish(t, mem, "demo", 5)
-	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img")
+	data, _ := mem.Data("demo/step-5-20261119T000000Z-0000abcd/app/app.pt")
 	data[0] ^= 0xff
-	mem.Set("demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img", data)
+	mem.Set("demo/step-5-20261119T000000Z-0000abcd/app/app.pt", data)
 	dest := filepath.Join(t.TempDir(), "restored")
 
 	if _, err := Fetch(bg, mem, at("demo", 5), dest); err == nil {
@@ -529,4 +529,46 @@ func TestFetchRefusesAManifestThatListsAFileOutsideTheFolder(t *testing.T) {
 	}
 
 	notExist(t, filepath.Join(parent, "escape"))
+}
+
+func TestABadProcessSnapshotFallsBackToTheApplicationCheckpoint(t *testing.T) {
+	const pages = "demo/step-5-20261119T000000Z-0000abcd/process/pages-1.img"
+	corrupt := NewMemory()
+	publish(t, corrupt, "demo", 5)
+	data, _ := corrupt.Data(pages)
+	data[0] ^= 0xff
+	corrupt.Set(pages, data)
+
+	missing := NewMemory()
+	publish(t, missing, "demo", 5)
+	missing.Delete(pages)
+
+	for name, mem := range map[string]*Memory{"corrupt": corrupt, "missing": missing} {
+		dest := filepath.Join(t.TempDir(), "restored")
+
+		m, err := Fetch(bg, mem, at("demo", 5), dest)
+		if err != nil {
+			t.Fatalf("%s process snapshot: Fetch = %v, want the restore point with the application checkpoint", name, err)
+		}
+
+		local, err := manifest.Load(dest)
+		if err != nil {
+			t.Fatalf("%s: no local manifest: %v", name, err)
+		}
+		for _, got := range []manifest.Manifest{m, local} {
+			process := got.Layers.ProcessSnapshot
+			if process.Status != manifest.StatusFailed || process.Error == nil || !strings.Contains(*process.Error, "process/pages-1.img") {
+				t.Fatalf("%s: process snapshot = %+v, want failed, naming the bad file", name, process)
+			}
+			if len(process.Files) != 0 {
+				t.Fatalf("%s: a failed process snapshot still lists files %+v", name, process.Files)
+			}
+			if got.Layers.ApplicationCheckpoint.Status != manifest.StatusOK {
+				t.Fatalf("%s: application checkpoint = %+v, want ok", name, got.Layers.ApplicationCheckpoint)
+			}
+		}
+		if err := local.Layers.ApplicationCheckpoint.Verify(dest); err != nil {
+			t.Fatalf("%s: the application checkpoint does not verify: %v", name, err)
+		}
+	}
 }

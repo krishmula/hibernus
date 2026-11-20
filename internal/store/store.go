@@ -9,7 +9,8 @@
 //     different content under a key that is taken is an error. So each checkpoint attempt
 //     publishes under its own folder, which no other attempt can have filled.
 //   - Fetch downloads the manifest first, checks every file against it, and installs the manifest
-//     last. A folder with a manifest is a verified restore point.
+//     last. A folder with a manifest is a verified restore point. A process snapshot that fails
+//     its check is marked failed there, because the application checkpoint can still restore.
 package store
 
 import (
@@ -151,7 +152,9 @@ func putVerified(ctx context.Context, st Store, key, src string, want Object) er
 
 // Fetch downloads the restore point rp into root and returns its manifest. It downloads the
 // manifest first, refuses a location that has none, checks every file against it, and moves the
-// manifest into root last, so root holds a manifest only when its files are verified.
+// manifest into root last, so root holds a manifest only when its files are verified. A process
+// snapshot that does not verify is recorded as failed in that local manifest, and the restore
+// point is still good. A manifest or application checkpoint that does not verify makes it bad.
 func Fetch(ctx context.Context, st Store, rp layout.RestorePoint, root string) (manifest.Manifest, error) {
 	if !layout.ValidWorkload(rp.Workload) {
 		return manifest.Manifest{}, fmt.Errorf("%q is not a valid workload name", rp.Workload)
@@ -185,27 +188,50 @@ func Fetch(ctx context.Context, st Store, rp layout.RestorePoint, root string) (
 		return manifest.Manifest{}, fmt.Errorf("%w: %s holds the manifest of workload %q step %d", ErrBadRestorePoint, prefix, m.Workload, m.Step)
 	}
 
-	for _, f := range layerFiles(m) {
-		if !filepath.IsLocal(f.Path) {
-			return manifest.Manifest{}, fmt.Errorf("%w: %s points outside the restore point", ErrBadRestorePoint, f.Path)
-		}
-		dst := filepath.Join(root, f.Path)
-		if err := st.Get(ctx, path.Join(prefix, filepath.ToSlash(f.Path)), dst); err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return manifest.Manifest{}, fmt.Errorf("%w: %s is listed in the manifest but is not in the store", ErrBadRestorePoint, f.Path)
-			}
-			return manifest.Manifest{}, fmt.Errorf("download %s: %w", f.Path, err)
-		}
+	problem, err := fetchLayer(ctx, st, prefix, root, m.Layers.ApplicationCheckpoint)
+	if err != nil {
+		return manifest.Manifest{}, err
 	}
-	for _, layer := range []manifest.Layer{m.Layers.ApplicationCheckpoint, m.Layers.ProcessSnapshot} {
-		if err := layer.Verify(root); err != nil {
-			return manifest.Manifest{}, fmt.Errorf("%w: %v", ErrBadRestorePoint, err)
+	if problem != "" {
+		return manifest.Manifest{}, fmt.Errorf("%w: %s", ErrBadRestorePoint, problem)
+	}
+	// A bad process snapshot leaves the application checkpoint to restore from (N3), so it does not
+	// make the restore point bad. The local manifest records it as failed.
+	problem, err = fetchLayer(ctx, st, prefix, root, m.Layers.ProcessSnapshot)
+	if err != nil {
+		return manifest.Manifest{}, err
+	}
+	if problem != "" {
+		m.Layers.ProcessSnapshot = manifest.Layer{Status: manifest.StatusFailed, Error: &problem, Files: []manifest.File{}}
+		if err := manifest.Write(staging, m); err != nil {
+			return manifest.Manifest{}, err
 		}
 	}
 	if err := os.Rename(filepath.Join(staging, manifest.FileName), filepath.Join(root, manifest.FileName)); err != nil {
 		return manifest.Manifest{}, err
 	}
 	return m, nil
+}
+
+// fetchLayer downloads the files of one layer into root and checks them against the manifest. A
+// problem with the layer as stored, such as a missing or corrupt file, comes back as problem. A
+// problem reaching the store comes back as err, and says nothing about the layer.
+func fetchLayer(ctx context.Context, st Store, prefix, root string, layer manifest.Layer) (problem string, err error) {
+	for _, f := range layer.Files {
+		if !filepath.IsLocal(f.Path) {
+			return f.Path + " points outside the restore point", nil
+		}
+		if err := st.Get(ctx, path.Join(prefix, filepath.ToSlash(f.Path)), filepath.Join(root, f.Path)); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return f.Path + " is listed in the manifest but is not in the store", nil
+			}
+			return "", fmt.Errorf("download %s: %w", f.Path, err)
+		}
+	}
+	if err := layer.Verify(root); err != nil {
+		return err.Error(), nil
+	}
+	return "", nil
 }
 
 // sameBytes reports whether data is the file that want describes.
