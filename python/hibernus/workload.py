@@ -1,6 +1,6 @@
 """A small image classifier that Hibernus can checkpoint.
 
-The model has dropout and batch norm, the data is a map-style dataset read with
+It trains on the GPU when there is one. The model has dropout and batch norm, the data is a map-style dataset read with
 `num_workers=0`, and one optimizer update takes four microbatches. Each call to
 `Trainer.run_update` ends at an update boundary: the optimizer, scheduler and gradient reset have
 finished, and the next batch has not been read. That is where the application checkpoint is written.
@@ -11,6 +11,7 @@ Needs torch and numpy, so the training hook in `hibernus/__init__.py` does not i
 """
 
 import hashlib
+import os
 from dataclasses import asdict, dataclass
 
 import torch
@@ -118,10 +119,27 @@ class SmallClassifier(nn.Module):
         return self.fc(self.dropout(x.flatten(1)))
 
 
+def default_device():
+    """The GPU when there is one, so the same workload trains on a laptop and on a G5."""
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def make_cuda_deterministic():
+    """Makes GPU training give the same losses and weights on every run. A restore must continue
+    exactly like a run that never stopped, and cuDNN and cuBLAS otherwise pick kernels that sum in
+    a different order each run. cuBLAS reads its setting when CUDA first starts, so this runs before
+    the first tensor reaches the GPU."""
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    torch.use_deterministic_algorithms(True)
+
+
 class Trainer:
     """Trains in whole optimizer updates. Between updates it is at an update boundary."""
 
-    def __init__(self, model, optimizer, scheduler, scaler, dataset, sampler):
+    def __init__(self, model, optimizer, scheduler, scaler, dataset, sampler, device):
+        self.device = device
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -186,6 +204,7 @@ class Trainer:
         sample_ids, total_loss = [], 0.0
         for _ in range(MICROBATCHES_PER_UPDATE):
             ids, images, labels = next(self._batches)
+            images, labels = images.to(self.device), labels.to(self.device)
             loss = F.cross_entropy(self.model(images), labels) / MICROBATCHES_PER_UPDATE
             if self.scaler is not None:
                 self.scaler.scale(loss).backward()
@@ -225,8 +244,13 @@ def build_trainer(
     batch_size=4,
     total_updates=100,
     use_scaler=False,
+    device=None,
 ):
-    """Builds the workload. `init_seed` sets the starting weights and the dropout RNG stream."""
+    """Builds the workload. `init_seed` sets the starting weights and the dropout RNG stream.
+    It trains on the GPU when there is one, unless `device` says otherwise."""
+    device = torch.device(device) if device is not None else default_device()
+    if device.type == "cuda":
+        make_cuda_deterministic()
     batches_per_epoch = n_samples // batch_size
     if batches_per_epoch % MICROBATCHES_PER_UPDATE:
         raise ValueError(
@@ -234,10 +258,10 @@ def build_trainer(
             "so an epoch would end inside an update"
         )
     torch.manual_seed(init_seed)
-    model = SmallClassifier()
+    model = SmallClassifier().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_updates)
-    scaler = torch.amp.GradScaler("cpu", init_scale=2.0**8) if use_scaler else None
+    scaler = torch.amp.GradScaler(device.type, init_scale=2.0**8) if use_scaler else None
     dataset = SyntheticImages(n_samples, data_seed)
     sampler = ResumableBatchSampler(n_samples, batch_size, shuffle_seed)
-    return Trainer(model, optimizer, scheduler, scaler, dataset, sampler)
+    return Trainer(model, optimizer, scheduler, scaler, dataset, sampler, device)
