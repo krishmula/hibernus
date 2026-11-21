@@ -5,8 +5,6 @@ import os
 import socket
 import sys
 
-from hibernus import fingerprint
-
 SOCKET_ENV = "HIB_SOCKET"
 
 # The stand-in application checkpoint of the first build: one file that holds only the step.
@@ -46,6 +44,9 @@ class Hook:
         `config` holds plain values that must not change across a restore, such as the shuffle
         seed and batch size. A restore whose config differs is refused before anything changes.
         """
+        # Imported here, so `python -m hibernus.fingerprint` doesn't find it already loaded and warn.
+        from hibernus import fingerprint
+
         # The interpreter lets hib restore collect the restore host's fingerprint the same way.
         reply = self._send({"op": "initialize", "fingerprint": fingerprint.collect(), "python": sys.executable})
         resume = reply["resume"]
