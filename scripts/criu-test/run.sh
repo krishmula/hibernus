@@ -20,6 +20,10 @@ run_case() {
 	cat "$work/$name/trainer.log"
 }
 
+# The control: the same pause and wake, but no CRIU in between.
+echo "== case control"
+"$here/criu-test" dump -dir "$work/control" -python python3 -control || result=1
+cat "$work/control/trainer.log"
 # The design: plain Python, restore under a subreaper.
 run_case plain "-python python3" ""
 # The same with torch loaded, so its thread pool exists when SIGCONT arrives.

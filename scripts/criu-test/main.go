@@ -4,6 +4,7 @@
 // one Linux host, as root, before any of it goes into hib.
 //
 //	criu-test dump -dir D -python P [-torch]    start the training process, pause it, and dump it
+//	criu-test dump -dir D -python P -control    the same, but wake it in place without CRIU
 //	criu-test restore -dir D [-sibling]         restore it, wake it, and let it finish
 //
 // Each check prints one PASS or FAIL line. The command exits 1 if any check fails.
@@ -56,6 +57,7 @@ func main() {
 	python := fs.String("python", "python3", "dump: the interpreter for trainer.py")
 	torch := fs.Bool("torch", false, "dump: have the training process load torch")
 	pauseAt := fs.Int("pause-at", 5, "dump: the step at which to pause")
+	control := fs.Bool("control", false, "dump: skip CRIU, and wake the stopped training process in place")
 	sibling := fs.Bool("sibling", false, "restore: use criu --restore-sibling instead of a subreaper")
 	fs.Parse(os.Args[2:])
 	if *dir == "" {
@@ -66,7 +68,7 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "dump":
-		err = dump(*dir, *socketPath, *python, *torch, *pauseAt)
+		err = dump(*dir, *socketPath, *python, *torch, *pauseAt, *control)
 	case "restore":
 		err = restore(*dir, *socketPath, *sibling)
 	default:
@@ -83,7 +85,7 @@ func main() {
 
 // dump runs the checkpoint host's side: start the training process as PID 1 of its own PID
 // namespace, pause it at an update boundary, stop it from outside, and run criu dump.
-func dump(dir, socketPath, python string, torch bool, pauseAt int) error {
+func dump(dir, socketPath, python string, torch bool, pauseAt int, control bool) error {
 	images := filepath.Join(dir, "images")
 	if err := os.MkdirAll(images, 0o755); err != nil {
 		return err
@@ -167,6 +169,9 @@ func dump(dir, socketPath, python string, torch bool, pauseAt int) error {
 		return err
 	}
 	check("PID 1 of its own namespace", lastField(status["NSpid"]) == "1", "NSpid %q, State %q", status["NSpid"], status["State"])
+	if control {
+		return wake(ln, pid, step)
+	}
 
 	start := time.Now()
 	err = runCRIU("dump", "-t", strconv.Itoa(pid), "-D", images, "-v4", "-o", "dump.log")
@@ -232,12 +237,18 @@ func restore(dir, socketPath string, sibling bool) error {
 	check("restored as PID 1 of a new namespace", lastField(status["NSpid"]) == "1", "NSpid %q", status["NSpid"])
 	check("the Supervisor adopted it", status["PPid"] == strconv.Itoa(os.Getpid()), "PPid %s, Supervisor %d", status["PPid"], os.Getpid())
 
+	return wake(ln, pid, d.Step)
+}
+
+// wake sends SIGCONT to the paused training process, accepts its reconnect, and lets it finish.
+func wake(ln *net.UnixListener, pid, step int) error {
 	if err := syscall.Kill(pid, syscall.SIGCONT); err != nil {
 		return fmt.Errorf("SIGCONT: %w", err)
 	}
 	conn, err := accept(ln, 10*time.Second)
 	check("SIGCONT woke it and it reconnected", err == nil, "%v", err)
 	if err != nil {
+		describe(pid)
 		syscall.Kill(pid, syscall.SIGKILL)
 		syscall.Wait4(pid, nil, 0, nil)
 		return nil
@@ -248,14 +259,14 @@ func restore(dir, socketPath string, sibling bool) error {
 	if err != nil {
 		return err
 	}
-	check("it reports the dumped step", m.Op == "restored" && m.Step == d.Step, "got %s step %d, want restored step %d", m.Op, m.Step, d.Step)
+	check("it reports the dumped step", m.Op == "restored" && m.Step == step, "got %s step %d, want restored step %d", m.Op, m.Step, step)
 	fmt.Printf("after the restore: %d threads, getpid %d, /proc/self is PID %d, /proc/%d/comm is %q\n",
 		m.Threads, m.GetPID, m.ProcSelfPID, m.GetPID, m.ProcGetPIDCom)
 	if err := write(conn, map[string]any{}); err != nil {
 		return err
 	}
 
-	next := d.Step + 1
+	next := step + 1
 	for {
 		m, err := read(in)
 		if err != nil {
@@ -271,6 +282,22 @@ func restore(dir, socketPath string, sibling bool) error {
 	_, err = syscall.Wait4(pid, &ws, 0, nil)
 	check("the Supervisor reaped it, exit 0", err == nil && ws.Exited() && ws.ExitStatus() == 0, "%v, wait status %v", err, ws)
 	return nil
+}
+
+// describe prints each thread's state, signal masks, and where it waits, to show why a wake failed.
+func describe(pid int) {
+	tasks, _ := filepath.Glob(fmt.Sprintf("/proc/%d/task/*", pid))
+	for _, task := range tasks {
+		status, err := readStatus(task + "/status")
+		if err != nil {
+			continue
+		}
+		wchan, _ := os.ReadFile(task + "/wchan")
+		sc, _ := os.ReadFile(task + "/syscall")
+		fmt.Printf("  thread %s: State %q SigPnd %s ShdPnd %s SigBlk %s SigCgt %s wchan %s syscall %s\n",
+			filepath.Base(task), status["State"], status["SigPnd"], status["ShdPnd"], status["SigBlk"], status["SigCgt"],
+			wchan, strings.Fields(string(sc) + " ?")[0])
+	}
 }
 
 // runCRIU runs criu with this command's own stdout and stderr, not pipes, so a restored process
@@ -322,7 +349,11 @@ func write(conn net.Conn, v any) error {
 }
 
 func procStatus(pid int) (map[string]string, error) {
-	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	return readStatus(fmt.Sprintf("/proc/%d/status", pid))
+}
+
+func readStatus(path string) (map[string]string, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -46,7 +46,10 @@ def pause(sock, step):
     write(sock, {"op": "app_checkpoint"})
     sock.close()
     print(f"paused after step {step}", flush=True)
-    woke.wait()
+    # Wait in slices. The kernel may hand SIGCONT to any thread, and CPython runs the handler only
+    # when the main thread is running Python, so a bare woke.wait() can sleep forever.
+    while not woke.wait(0.1):
+        pass
     print(f"woke after step {step}", flush=True)
 
     sock = connect()
