@@ -24,6 +24,21 @@ Drafted on 2026-11-16. v1 is done when every requirement in section 4 of the sys
 | 8. Measure and harden | Timing reports, the idle overhead test, the RAM and disk checks, and install on a fresh host | G5 | Claude | Each test in section 4 passes | F4, N6, N7, N8, N9 |
 | 9. Demo | An emulated disruption on one G5, and a restore on a second G5 | 2 x G5 | Krishna and Nitish | The demo runs start to finish | all |
 
+## Results
+
+### Phase 4, 2026-11-21
+
+Passed on EC2 g5.xlarge hosts (NVIDIA A10G) in Nitish's AWS account, `us-east-1`, because the Hibernus account had no G quota yet. Hibernus `0603a8c`, PyTorch 2.14.1 with CUDA 13.0, the classifier example, and a real S3 bucket. Only the application checkpoint, as planned.
+
+| Check | Result |
+|---|---|
+| The Python tests on the GPU | 45 passed |
+| Checkpoint to S3 | Step 540 in 0.1 s. The manifest holds the real fingerprint: driver 595.112.07, cuDNN 92400, kernel 6.8.0-1069-aws |
+| Restore on a second G5 with the same fingerprint (F2) | Training continued at step 541. Steps 541 to 590 matched a run that never stopped, line for line, on another physical GPU |
+| Restore on a host with another driver (N5) | The checkpoint host, after its driver changed to 595.91.07. `hib restore` exited 1 with `driver: checkpoint host 595.112.07, this host 595.91.07` and started no training process |
+
+Only one G5 ran at a time, because AWS had no second G5 free in any zone that day. The checkpoint host went away before the restore host started, as in a real disruption.
+
 ## Runs in parallel with phase 1
 
 A CRIU test on Linux, owned by Krishna. A CPU-only toy parent and child, joined by a pipe and a socket. Dump the child, then restore it under a new parent. This test answers two questions that shape the Supervisor before phase 5:
@@ -38,4 +53,4 @@ A CRIU test on Linux, owned by Krishna. A CPU-only toy parent and child, joined 
 | Does v1 cover inference workloads? | Phase 2 |
 | Which environment variables the manifest records, since some hold secrets | Phase 3 |
 | Does v1 support `num_workers > 0`? | Phase 5 |
-| A Linux host for the CRIU test, and G5 hosts for phase 4 | The CRIU test, and phase 4 |
+| A Linux host for the CRIU test | The CRIU test |

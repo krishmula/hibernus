@@ -58,3 +58,4 @@ def test_running_the_module_prints_the_same_fingerprint():
     out = subprocess.run([sys.executable, "-m", "hibernus.fingerprint"], capture_output=True, text=True, check=True)
 
     assert json.loads(out.stdout) == fingerprint.collect()
+    assert out.stderr == ""
