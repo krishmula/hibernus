@@ -20,7 +20,7 @@ Drafted on 2026-11-16. v1 is done when every requirement in section 4 of the sys
 | 4. Move to a G5 | Run phases 1 to 3 on a G5 with GPU training, and add the fingerprint check | G5 | Claude | The end-to-end check passes on a G5. A host with a different driver is refused | F2, N5 |
 | 5. CRIU process snapshot | CRIU captures the training process on the CPU side. The new Supervisor restores it, and the training hook reconnects | Linux | Krishna | The restore uses the process snapshot. With the snapshot corrupted, it falls back to the application checkpoint | N3 |
 | 6. cuda-checkpoint | GPU memory goes into the process snapshot | G5 | Krishna | The end-to-end check passes on a G5 through the process snapshot | F3 on GPU |
-| 7. DataLoader child processes | The process snapshot includes the DataLoader child processes | G5 | Krishna | The end-to-end check passes with `num_workers > 0` | only if in scope |
+| 7. DataLoader child processes | The process snapshot includes the DataLoader child processes | G5 | Krishna | The end-to-end check passes with `num_workers > 0` | out of v1 |
 | 8. Measure and harden | Timing reports, the idle overhead test, the RAM and disk checks, and install on a fresh host | G5 | Claude | Each test in section 4 passes | F4, N6, N7, N8, N9 |
 | 9. Demo | An emulated disruption on one G5, and a restore on a second G5 | 2 x G5 | Krishna and Nitish | The demo runs start to finish | all |
 
@@ -39,12 +39,33 @@ Passed on EC2 g5.xlarge hosts (NVIDIA A10G) in Nitish's AWS account, `us-east-1`
 
 Only one G5 ran at a time, because AWS had no second G5 free in any zone that day. The checkpoint host went away before the restore host started, as in a real disruption.
 
+### CRIU test, 2026-11-21
+
+Passed on a c6i.large in Nitish's account, `us-east-1`: Ubuntu 22.04.5, kernel 6.8.0-1069-aws, CRIU 4.3 from the CRIU PPA, Python 3.10, and torch 2.14.1 on the CPU. All four cases passed every check. Each restore continued at step 6 after a pause at step 5, and the stand-in Supervisor reaped the training process with exit 0.
+
+| Question | Answer |
+|---|---|
+| Does CRIU dump a stopped PID 1 of a namespace and restore it still stopped? | Yes. After the restore, `State: T` and `NSpid` ends in 1. Dump and restore each took 0.1 s or less. The images were 5.2 MB for plain Python and 141 MB with torch loaded |
+| Does the stand-in Supervisor adopt the restored training process? | Yes, as a subreaper. `--restore-sibling` also works and needs no subreaper, though CRIU warns that some kernels don't support it |
+| Does SIGCONT end the wait, with threads running? | Yes, but only when the wait runs in 100 ms slices. A bare `woke.wait()` hung even without CRIU. The kernel gave SIGCONT to another thread, and CPython runs a handler only once the main thread runs Python again, which a thread asleep in `futex` never does |
+| Does anything break without a `/proc` remount? | Nothing in the test. `/proc` still shows the host's PID namespace, though: `getpid()` returns 1, but `/proc/1` is the host's systemd. A library that reads `/proc/<getpid()>` reads the wrong process |
+
+What else the test found:
+
+- Ubuntu 22.04's own CRIU 3.16 dumps, but the restored process segfaults. It can't restore rseq, which glibc 2.35 turns on. CRIU 3.17 and later can.
+- The training process ran in its own session, set up in advance and not tested without it. CRIU refuses a process tree whose session leader is outside it, unless `--shell-job` is set.
+- The training process wrote its output to a file, and CRIU reopened that file by path. The test restored on the same host. A restore host needs that file at the same path, or another plan for the output.
+
 ## Runs in parallel with phase 1
 
-A CRIU test on Linux, owned by Krishna. A CPU-only toy parent and child, joined by a pipe and a socket. Dump the child, then restore it under a new parent. This test answers two questions that shape the Supervisor before phase 5:
+A CRIU test on Linux, owned by Krishna, in `scripts/criu-test`. It checks the phase 5 design on one host before any of it goes into `hib`. A small Go stand-in Supervisor starts a Python stand-in training process as PID 1 of its own PID namespace. At step 5 the training process pauses: it installs a SIGCONT handler, closes its connection, and waits for the handler's flag. The stand-in Supervisor stops it with SIGSTOP and runs `criu dump`. A second run of the stand-in Supervisor becomes a subreaper, runs `criu restore --restore-detached`, sends SIGCONT, and accepts the reconnect. The test answers four questions:
 
-- Can CRIU restore a training process whose socket pointed at a Supervisor outside the dump?
-- Can the restored process become a child of the new Supervisor?
+- Does CRIU dump a stopped PID 1 of a namespace, and restore it still stopped in a new namespace?
+- Does the stand-in Supervisor adopt the restored training process?
+- Does SIGCONT end the wait, including with torch's threads running, and does the reconnect work?
+- Does anything break without a `/proc` remount, which would need a mount namespace?
+
+It runs four cases: a control that wakes the training process without CRIU, plain Python, Python with torch loaded, and `--restore-sibling` in place of the subreaper. On a fresh Ubuntu host, as root: `setup.sh`, then `run.sh`.
 
 ## Decisions needed, and by when
 
@@ -52,5 +73,10 @@ A CRIU test on Linux, owned by Krishna. A CPU-only toy parent and child, joined 
 |---|---|
 | Does v1 cover inference workloads? | Phase 2 |
 | Which environment variables the manifest records, since some hold secrets | Phase 3 |
-| Does v1 support `num_workers > 0`? | Phase 5 |
-| A Linux host for the CRIU test | The CRIU test |
+
+## Decisions made
+
+| Decision | Made on |
+|---|---|
+| v1 uses DataLoader `num_workers = 0`. Phase 7 is out of v1 | 2026-11-21 |
+| The CRIU test runs on a c6i.large in Nitish's account | 2026-11-21 |
