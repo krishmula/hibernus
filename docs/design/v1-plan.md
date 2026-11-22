@@ -53,7 +53,7 @@ Passed on a c6i.large in Nitish's account, `us-east-1`: Ubuntu 22.04.5, kernel 6
 What else the test found:
 
 - Ubuntu 22.04's own CRIU 3.16 dumps, but the restored process segfaults. It can't restore rseq, which glibc 2.35 turns on. CRIU 3.17 and later can.
-- The training process needs its own session. CRIU refuses a process tree whose session leader is outside it.
+- The training process ran in its own session, set up in advance and not tested without it. CRIU refuses a process tree whose session leader is outside it, unless `--shell-job` is set.
 - The training process wrote its output to a file, and CRIU reopened that file by path. The test restored on the same host. A restore host needs that file at the same path, or another plan for the output.
 
 ## Runs in parallel with phase 1
