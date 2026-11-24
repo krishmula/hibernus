@@ -12,7 +12,7 @@ variable "profile" {
 variable "bucket_name" {
   description = "Globally unique S3 bucket name for restore points"
   type        = string
-  default     = "hibernus-restore-points-890b090de347a139bdec621af1"
+  default     = "hibernus-restore-points-nitish-01"
 }
 
 variable "iam_user" {
