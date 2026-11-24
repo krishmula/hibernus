@@ -7,6 +7,7 @@ torch and numpy: `pip install -e "python[train]"`.
 """
 
 import argparse
+import time
 import itertools
 import os
 import sys
@@ -32,6 +33,7 @@ def main():
     parser.add_argument("--updates", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--step-sleep", type=float, default=0.0, help="seconds to pause after each update, to make a run last long enough to watch")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -75,6 +77,7 @@ def main():
             step += 1
             print(f"step {step} epoch {epoch} loss {loss.item():.6f}", flush=True)
             hib.boundary(step, state, config)  # the update boundary
+            time.sleep(args.step_sleep)
             if step == args.updates:
                 break
         epoch, skip = epoch + 1, 0
