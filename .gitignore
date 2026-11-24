@@ -3,3 +3,9 @@ bin/
 .venv/
 __pycache__/
 *.egg-info/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
