@@ -80,3 +80,4 @@ It runs four cases: a control that wakes the training process without CRIU, plai
 |---|---|
 | v1 uses DataLoader `num_workers = 0`. Phase 7 is out of v1 | 2026-11-21 |
 | The CRIU test runs on a c6i.large in Nitish's account | 2026-11-21 |
+| The phase 5 design, in [process-snapshot.md](process-snapshot.md) | 2026-11-24 |
