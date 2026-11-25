@@ -1,0 +1,607 @@
+<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><script>if (matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.theme = "dark";</script><style>/* T3's theme values, captured 2026-11-20. Used only by export.py, outside the T3 frame. */
+:root{
+  --background:#fcfcfc;--foreground:#27272a;--muted:#fafafa;--muted-foreground:#71717b;
+  --card:#ffffff;--card-foreground:#27272a;--popover:#ffffff;--secondary:#fafafa;--secondary-foreground:#27272a;
+  --border:#e4e4e7;--ring:#1b4ed8;--primary:#1b4ed8;--primary-foreground:#ffffff;
+  --accent:#1b4ed8;--accent-foreground:#ffffff;--accent-surface:#f4f4f5;
+  --destructive:#fb2c36;--destructive-foreground:#c10007;--destructive-surface:#fcebec;
+  --warning:#fe9a00;--warning-foreground:#bb4d00;--warning-surface:#fcf4e8;
+  --success:#10b981;--success-foreground:#047857;--info:#3b82f6;--info-foreground:#1d4ed8;
+  --code-background:#ffffff;
+  --chart-1:#1b4ed8;--chart-2:#0d9488;--chart-3:#d97706;--chart-4:#9333ea;--chart-5:#e11d48;--chart-6:#65a30d;
+  --radius:0.625rem;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  --font-mono:Menlo,Consolas,"Liberation Mono",monospace;
+}
+:root[data-theme="dark"]{
+  --background:#0a0a0a;--foreground:#f5f5f5;--muted:#111111;--muted-foreground:#818181;
+  --card:#111111;--card-foreground:#f5f5f5;--popover:#111111;--secondary:#111111;--secondary-foreground:#f5f5f5;
+  --border:#191919;--ring:#346bf1;--primary:#346bf1;--primary-foreground:#ffffff;
+  --accent:#346bf1;--accent-foreground:#ffffff;--accent-surface:#141414;
+  --destructive:#fb414a;--destructive-foreground:#ff6467;--destructive-surface:#301214;
+  --warning:#fe9a00;--warning-foreground:#ffb900;--warning-surface:#312108;
+  --success:#10b981;--success-foreground:#34d399;--info:#3b82f6;--info-foreground:#60a5fa;
+  --code-background:#111111;
+  --chart-1:#346bf1;--chart-2:#2dd4bf;--chart-3:#fbbf24;--chart-4:#c084fc;--chart-5:#fb7185;--chart-6:#a3e635;
+}
+html{background:var(--background);padding:24px}
+body{max-width:728px;margin:0 auto}
+</style><meta charset="utf-8"><title>Stop, adopt, renumber</title><style>
+:root{
+  --e1:var(--chart-1); --e2:var(--chart-2); --e3:var(--chart-4);
+  --e4:var(--chart-5); --e5:var(--chart-6);
+  --hi:var(--chart-3);
+}
+body{margin:0;font-family:var(--font-sans);color:var(--foreground);line-height:1.5}
+.wrap{display:flex;flex-direction:column;gap:18px}
+.hero h1{margin:4px 0 6px;font-size:22px;line-height:1.25;letter-spacing:-.01em}
+.hero p{margin:0;font-size:14px;color:var(--muted-foreground)}
+.section{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-foreground);margin:14px 0 -6px;display:flex;align-items:center;gap:10px}
+.section::after{content:"";flex:1;height:1px;background:var(--border)}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.panel h2{margin:0 0 4px;font-size:15px;line-height:1.35}
+.num{display:inline-block;min-width:20px;height:20px;border-radius:10px;background:var(--primary);color:var(--primary-foreground);text-align:center;line-height:20px;font-size:12px;font-weight:700;margin-right:8px;vertical-align:1px}
+.sub{margin:0 0 12px;font-size:13.5px;color:var(--muted-foreground)}
+.sub b{color:var(--foreground)}
+.eq{font-family:var(--font-mono);font-size:12px;background:var(--code-background);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:10px;white-space:pre;overflow-x:auto;line-height:1.55}
+.eq .c{color:var(--muted-foreground)}
+.foot{font-size:12px;color:var(--muted-foreground);margin-top:8px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--muted-foreground);margin-top:10px}
+.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;background:var(--c)}
+.tag{display:inline-block;font-size:11px;font-weight:700;padding:0 6px;border-radius:9px;border:1px solid var(--hi);color:var(--hi);vertical-align:1px;margin-left:4px}
+code,.mono{font-family:var(--font-mono);font-size:12px}
+.k1{color:var(--e1)} .k2{color:var(--e2)} .k3{color:var(--e3)} .k4{color:var(--e4)} .k5{color:var(--e5)} .hi{color:var(--hi)}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl th{text-align:left;font-weight:700;color:var(--muted-foreground);font-size:12px;padding:6px 8px;border-bottom:1px solid var(--border)}
+.tbl td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+.tbl tr:last-child td{border-bottom:none}
+.ok{color:var(--success-foreground);font-weight:700}
+.no{color:var(--destructive-foreground);font-weight:700}
+.cast{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.cast div{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12.5px}
+.cast b{display:block;font-size:12px;color:var(--muted-foreground);font-weight:700;margin-bottom:2px}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0 10px}
+.ctrl button{font:inherit;font-size:12.5px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid var(--border);background:var(--secondary);color:var(--foreground);cursor:pointer}
+.ctrl button.pri{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+.ctrl .pos{font-family:var(--font-mono);font-size:12px;color:var(--muted-foreground);margin-left:auto}
+.now{font-size:13.5px;margin:0 0 10px;padding:8px 10px;border-left:3px solid var(--hi);background:var(--accent-surface);border-radius:4px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px}
+.fields div{border:1px solid var(--border);border-radius:8px;padding:6px 9px}
+.fields b{display:block;font-size:11px;color:var(--muted-foreground);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.fields span{font-family:var(--font-mono);font-size:12.5px}
+.steps tr{cursor:pointer}
+.steps tr.cur td{background:var(--accent-surface)}
+.steps tr.cur td:first-child{box-shadow:inset 3px 0 0 var(--hi)}
+.steps td:first-child{font-family:var(--font-mono);color:var(--muted-foreground);width:24px}
+.steps td:nth-child(2){font-size:11.5px;color:var(--muted-foreground);white-space:nowrap}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{font-family:var(--font-mono);font-size:11px;fill:var(--foreground)}
+svg text.m{fill:var(--muted-foreground)}
+svg text.b{font-weight:700}
+</style></head><body><div class="wrap">
+
+<div class="hero">
+  <h1>Stop, adopt, renumber: the three Linux tricks behind the process snapshot</h1>
+  <p>How Hibernus freezes the training process for CRIU, hands it back to the Supervisor on the restore host, and keeps its PID from clashing. Each panel builds on the one before.</p>
+</div>
+
+<div class="panel">
+  <h2><span class="num">0</span>One running example, used in every panel.</h2>
+  <p class="sub">The workload <code>classifier</code> gets a checkpoint after step 540 and continues at step 541 on another host. I made up the PIDs, and they stay the same everywhere on this page.</p>
+  <div class="cast">
+    <div><b>Checkpoint host</b><span class="k1">Supervisor 3000</span><br><span class="k2">training process 4123</span> (PID 1 in its namespace)<br><span class="k3">criu dump 3105</span></div>
+    <div><b>Restore host</b><span class="k1">Supervisor 2200</span><br><span class="k3">criu restore 2310</span><br><span class="k2">training process 5870</span> (PID 1 in its namespace)</div>
+    <div><b>Shared</b>socket <code>/tmp/hib-0/classifier.sock</code><br>steps: paused after 540, continues at 541</div>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--e1)">Supervisor</span><span style="--c:var(--e2)">training process</span><span style="--c:var(--e3)">CRIU</span><span style="--c:var(--e4)">kernel</span><span style="--c:var(--e5)">PID namespace</span><span style="--c:var(--hi)">look here: signals</span>
+  </div>
+  <div class="foot">This is the phase 5 proposal, not code yet. Items tagged <span class="tag">CRIU test</span> are guesses the CRIU test has to confirm.</div>
+</div>
+
+<div class="section">A · Stop and continue</div>
+
+<div class="panel">
+  <h2><span class="num">1</span>A stopped process is paused, not gone. The kernel keeps its whole record.</h2>
+  <p class="sub">Every process is a record inside the <span class="k4">kernel</span>. Stopping it changes one field, the state, and takes it off the list of processes that get CPU time. Everything else stays: memory, open files, PID, the next instruction.</p>
+  <svg id="p1" viewBox="0 0 700 230"></svg>
+  <div class="foot"><code>ps</code> prints the state letter in its STAT column: <code>R</code> running, <code>S</code> sleeping (waiting for something), <code>T</code> stopped. A process is gone only after it exits and its parent collects its exit code.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">2</span>Your toy test: the process lived 1302 s and trained for about 11 s.</h2>
+  <p class="sub">This is the run from your terminal. Each Ctrl+Z sent <span class="hi">SIGSTOP</span>, each <code>fg</code> sent <span class="hi">SIGCONT</span>, and the step counter never reset. <code>zsh</code> printed <code>suspended</code> because the <span class="k4">kernel</span> told it, the parent, that its child stopped.</p>
+  <svg id="p2" viewBox="0 0 700 175"></svg>
+  <div class="eq">22 steps × 0.5 s  = 11 s of training
+1302.175 s − 11 s ≈ 1291 s ≈ 21.5 min stopped, with nothing lost</div>
+  <div class="foot">The bars are not to scale. Ctrl+C sent SIGINT, which Python turns into <code>KeyboardInterrupt</code>, so that one ended the process.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">3</span>Inside the kernel, SIGSTOP freezes the process and SIGCONT unfreezes it on the spot.</h2>
+  <p class="sub">The sender never touches the target directly. It asks the <span class="k4">kernel</span>, which marks the signal, makes the target act on it, and reports the result to the parent.</p>
+  <svg id="p3" viewBox="0 0 700 380"></svg>
+  <div class="eq"><span class="c">// Go, in the Supervisor</span>
+syscall.Kill(4123, syscall.SIGSTOP)                     <span class="c">// step 1</span>
+syscall.Wait4(4123, &amp;status, syscall.WUNTRACED, nil)  <span class="c">// step 5</span>
+status.Stopped()                                        <span class="c">// true: stopped by SIGSTOP</span>
+syscall.Kill(4123, syscall.SIGCONT)                     <span class="c">// step 6</span></div>
+  <div class="foot">Nothing can catch, block, or ignore SIGSTOP in an ordinary process. SIGCONT resumes the process the moment the kernel receives it, before any handler runs. Without <code>WUNTRACED</code>, <code>Wait4</code> returns only when the child exits.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">4</span>In Hibernus, the training hook closes the connection and waits. The Supervisor sends the stop.</h2>
+  <p class="sub">The training hook can't stop itself (panel 11 shows why), so it gives the <span class="k1">Supervisor</span> a sign instead: it closes the connection. The <span class="k1">Supervisor</span> sends <span class="hi">SIGSTOP</span> from outside, confirms the stop, and runs <span class="k3">CRIU</span>.</p>
+  <svg id="p4" viewBox="0 0 700 520"></svg>
+  <div class="eq"><span class="c"># training hook, after step 5 (replaces today's wait)</span>
+woke = threading.Event()
+<span class="c"># SIGCONT now sets a flag</span>
+signal.signal(signal.SIGCONT, lambda signum, frame: woke.set())
+self._sock.close()     <span class="c"># step 6: no connection in the snapshot</span>
+woke.wait()            <span class="c"># sleeps; SIGSTOP freezes it here</span>
+self._reconnect(step)  <span class="c"># first line to run on the restore host</span></div>
+  <div class="foot">Why a flag and not <code>signal.pause()</code>: if SIGSTOP and SIGCONT both arrived before the wait began, <code>pause()</code> would sleep forever. The flag remembers that SIGCONT came. Having a handler also lets SIGCONT reach a PID 1 (panel 11). <span class="tag">CRIU test</span> Today's wait is <code>python/hibernus/__init__.py:83</code>.</div>
+</div>
+
+<div class="section">B · Subreaper</div>
+
+<div class="panel">
+  <h2><span class="num">5</span>When a parent exits first, the kernel hands its orphan to PID 1.</h2>
+  <p class="sub">Every process must have a parent. This is the demo you can run on your Mac: <code>sh -c 'sleep 300 &amp;'</code>. The <code>sh</code> exits right away, and <code>launchd</code> (PID 1) adopts <code>sleep</code>.</p>
+  <svg id="p5" viewBox="0 0 700 255"></svg>
+  <div class="foot">On Ubuntu, PID 1 is <code>systemd</code>. PIDs 700, 812, and 813 are examples. Check the real one with <code>ps -o pid,ppid,command -p &lt;PID&gt;</code>.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">6</span>A subreaper catches the orphan before PID 1 does.</h2>
+  <p class="sub">On the restore host, the <span class="k1">Supervisor</span> declares itself a subreaper. When <span class="k3">CRIU</span> exits, the <span class="k4">kernel</span> walks up from the dead parent and gives the <span class="k2">training process</span> to the first living subreaper it finds.</p>
+  <svg id="p6" viewBox="0 0 700 290"></svg>
+  <div class="eq"><span class="c">// Go, once, when the Supervisor starts (Linux only)</span>
+unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0)</div>
+  <div class="foot">Docker and containerd use the same call to keep the processes they start. <span class="tag">CRIU test</span> confirms the hand-off with a CRIU-restored process.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">7</span>Detached CRIU exits right after the restore, and that exit creates the orphan.</h2>
+  <p class="sub">Both modes restore the same way. The difference is what <span class="k3">CRIU</span> does next. Attached, it stays as the parent for the whole run. Detached, it reports success and leaves, so the subreaper can adopt the <span class="k2">training process</span>.</p>
+  <svg id="p7" viewBox="0 0 700 250"></svg>
+  <div class="foot">Detached is the flag <code>criu restore --restore-detached</code>. Its exit code means "the restore worked," which <code>hib restore</code> needs to decide whether to fall back to the application checkpoint.</div>
+</div>
+
+<div class="section">C · PID namespaces</div>
+
+<div class="panel">
+  <h2><span class="num">8</span>One process, one number per namespace.</h2>
+  <p class="sub">A <span class="k5">PID namespace</span> is a private PID counter. The <span class="k4">kernel</span> numbers a process in its own namespace and in every namespace above it, and keeps all the numbers.</p>
+  <svg id="p8" viewBox="0 0 700 250"></svg>
+  <div class="eq"><span class="c">// Go, in hib run: start the training process in a new PID namespace</span>
+cmd.SysProcAttr = &amp;syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWPID}</div>
+  <div class="foot">The training process is still the Supervisor's direct child. Only its numbering is private.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">9</span>Every PID call gets its answer from the asking process's namespace.</h2>
+  <p class="sub">The same process is 4123 to the <span class="k1">Supervisor</span> and 1 to itself. Processes inside can't see out. Processes outside see everything inside.</p>
+  <table class="tbl">
+    <tr><th>Who asks</th><th>Call</th><th>Looks up in</th><th>Answer</th></tr>
+    <tr><td class="k2">training process</td><td><code>os.getpid()</code></td><td class="k5">its namespace</td><td><code>1</code></td></tr>
+    <tr><td class="k2">training process</td><td><code>os.getppid()</code></td><td class="k5">its namespace</td><td><code>0</code>: the Supervisor is outside, so invisible</td></tr>
+    <tr><td class="k1">Supervisor</td><td><code>kill(4123, SIGCONT)</code></td><td>host namespace</td><td class="ok">finds the training process</td></tr>
+    <tr><td class="k2">training process</td><td><code>kill(4123, SIGTERM)</code></td><td class="k5">its namespace</td><td class="no">ESRCH: no such process</td></tr>
+    <tr><td class="k1">Supervisor</td><td><code>ps</code>, <code>/proc/4123</code></td><td>host namespace</td><td>the training process, as 4123</td></tr>
+  </table>
+  <div class="foot">Inside the namespace, <code>/proc</code> still lists host PIDs until something mounts it again. <span class="tag">CRIU test</span> checks whether PyTorch or CRIU care.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">10</span>The inside PID must match after a restore. The host PID never has to.</h2>
+  <p class="sub">CRIU can't renumber a process. Without a namespace, it needs the exact host PID free on the restore host. With one, it needs PID 1 in a brand-new, empty namespace, which is always free.</p>
+  <svg id="p10" viewBox="0 0 700 200"></svg>
+  <div class="eq"><span class="c">// "PID 1 in the new namespace, any free PID on the host"</span>
+clone3(flags = CLONE_NEWPID, set_tid = [1])
+result: inside PID 1, host PID 5870</div>
+  <div class="foot">This only works if <code>hib run</code> started the training process in a namespace on the checkpoint host too. A process can't move into a new PID namespace after it starts.</div>
+</div>
+
+<div class="panel">
+  <h2><span class="num">11</span>A namespace's PID 1 ignores signals it has no handler for, unless they come from outside.</h2>
+  <p class="sub">The kernel protects every PID 1 so it doesn't die by accident. A <span class="k2">training process</span> that is PID 1 can't stop itself. Its own <span class="hi">SIGSTOP</span> comes from inside, so the kernel drops it. The <span class="k1">Supervisor</span>'s comes from outside, so it gets through.</p>
+  <svg id="p11" viewBox="0 0 700 160"></svg>
+  <table class="tbl">
+    <tr><th>Signal to the training process (PID 1)</th><th>Sent from inside, including by itself</th><th>Sent by the Supervisor, from outside</th></tr>
+    <tr><td><code>SIGSTOP</code></td><td class="no">ignored</td><td class="ok">delivered</td></tr>
+    <tr><td><code>SIGKILL</code></td><td class="no">ignored</td><td class="ok">delivered</td></tr>
+    <tr><td><code>SIGTERM</code> (Python sets no handler)</td><td class="no">ignored</td><td class="no">ignored</td></tr>
+    <tr><td><code>SIGINT</code>, Ctrl+C (Python sets a handler)</td><td class="ok">delivered</td><td class="ok">delivered</td></tr>
+    <tr><td><code>SIGCONT</code> (the training hook sets a handler)</td><td>not needed</td><td class="ok">delivered</td></tr>
+  </table>
+  <div class="foot">Rule source: <code>man 7 pid_namespaces</code>. Also, if PID 1 exits, the kernel kills everything else in its namespace. With <code>num_workers = 0</code>, nothing else is there.</div>
+</div>
+
+<div class="section">D · All together</div>
+
+<div class="panel">
+  <h2><span class="num">12</span>From step 540 on one host to step 541 on another, in 13 moves.</h2>
+  <p class="sub">Step through it, or read the table. Watch the <span class="k2">training process</span>'s parent, state, and PIDs change.</p>
+  <div class="ctrl"><button id="prev">Back</button><button id="next" class="pri">Next</button><button id="play">Play</button><button id="reset">Reset</button><span class="pos" id="pos"></span></div>
+  <div class="now" id="now"></div>
+  <svg id="p12" viewBox="0 0 700 240"></svg>
+  <div class="fields" id="fields"></div>
+  <table class="tbl steps" id="steps" style="margin-top:12px"></table>
+  <div class="foot">The socket path comes from the workload name, the user ID, and the temporary folder (<code>internal/protocol/protocol.go:97</code>), so both Supervisors listen at <code>/tmp/hib-0/classifier.sock</code>.</div>
+</div>
+
+</div>
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+const CH = 6.6; // width of one 11px mono character
+
+function el(svg, tag, attrs = {}, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  svg.appendChild(n);
+  return n;
+}
+function txt(svg, x, y, s, { anchor = 'start', cls, size, color, weight } = {}) {
+  const style = [color && `fill:${color}`, size && `font-size:${size}px`, weight && `font-weight:${weight}`].filter(Boolean).join(';');
+  return el(svg, 'text', { x, y, 'text-anchor': anchor, 'dominant-baseline': 'middle', class: cls, style: style || undefined }, s);
+}
+function box(svg, x, y, w, h, { color = 'var(--muted-foreground)', label, sub, tint = 0.16, dashed, rx = 6, hi, subColor } = {}) {
+  el(svg, 'rect', { x, y, width: w, height: h, rx, style: `fill:${color};fill-opacity:${tint};stroke:${hi ? 'var(--hi)' : color};stroke-width:${hi ? 2.5 : 1.25}${dashed ? ';stroke-dasharray:4 3' : ''}` });
+  if (label !== undefined) txt(svg, x + w / 2, y + h / 2 - (sub ? 7 : 0), label, { anchor: 'middle', weight: 700 });
+  if (sub !== undefined) txt(svg, x + w / 2, y + h / 2 + 8, sub, { anchor: 'middle', cls: subColor ? undefined : 'm', color: subColor });
+}
+let arrowId = 0;
+function arrow(svg, x1, y1, x2, y2, { color = 'var(--muted-foreground)', label, dashed, curve = 0, width = 1.5 } = {}) {
+  const id = 'ah' + (arrowId++);
+  const m = el(el(svg, 'defs'), 'marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' });
+  el(m, 'path', { d: 'M0,0 L10,5 L0,10 z', style: `fill:${color}` });
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - curve;
+  el(svg, 'path', { d: `M${x1},${y1} Q${mx},${my} ${x2},${y2}`, 'marker-end': `url(#${id})`,
+    style: `fill:none;stroke:${color};stroke-width:${width}${dashed ? ';stroke-dasharray:5 4' : ''}` });
+  if (label !== undefined) txt(svg, mx, my - 8, label, { anchor: 'middle', cls: 'm' });
+}
+function line(svg, d, { color = 'var(--muted-foreground)', dashed, width = 1.25 } = {}) {
+  el(svg, 'path', { d, style: `fill:none;stroke:${color};stroke-width:${width}${dashed ? ';stroke-dasharray:4 3' : ''}` });
+}
+function cross(svg, x, y, color) { line(svg, `M${x - 6},${y - 6} L${x + 6},${y + 6} M${x + 6},${y - 6} L${x - 6},${y + 6}`, { color, width: 2.4 }); }
+// Parent-to-child edge: down from the parent's left side, then right into the child.
+function edge(svg, px, py, cx, cy, opts) { line(svg, `M${px},${py} V${cy} H${cx}`, opts); }
+
+// Sequence diagram: columns with lifelines, then rows of messages or notes.
+function seq(svg, cols, rows, { top = 70, dy = 34, H } = {}) {
+  cols.forEach(c => {
+    line(svg, `M${c.x},46 V${H - 6}`, { color: c.color, dashed: true, width: 1 });
+    box(svg, c.x - c.w / 2, 8, c.w, 38, { color: c.color, label: c.label, sub: c.sub, tint: 0.2 });
+  });
+  rows.forEach((r, i) => {
+    const y = top + i * dy;
+    if (r.note !== undefined) {
+      const c = cols[r.note], w = r.text.length * CH + 18;
+      box(svg, c.x - w / 2, y - 11, w, 22, { color: r.color || c.color, tint: r.tint ?? 0.12, rx: 4, dashed: r.dashed });
+      txt(svg, c.x, y, r.text, { anchor: 'middle', color: r.textColor });
+    } else {
+      const a = cols[r.from].x, b = cols[r.to].x, color = r.color || cols[r.from].color;
+      arrow(svg, a + (b > a ? 3 : -3), y, b + (b > a ? -3 : 3), y, { color, width: r.hi ? 2.2 : 1.5 });
+      txt(svg, (a + b) / 2, y - 9, r.text, { anchor: 'middle', color: r.hi ? 'var(--hi)' : undefined, weight: r.hi ? 700 : undefined });
+    }
+  });
+}
+
+/* ---------- Panel 1: the record and the states ---------- */
+{
+  const s = $('p1');
+  box(s, 20, 10, 275, 210, { color: 'var(--e2)', tint: 0.08 });
+  txt(s, 34, 30, 'training process, PID 4123', { weight: 700, color: 'var(--e2)' });
+  txt(s, 34, 46, "the kernel's record of it", { cls: 'm' });
+  const rows = [['state', 'S to T (the only change)', true], ['memory', 'model, optimizer, step 540'], ['open files', 'fd 0-2, fd 3: the socket'], ['registers', 'the next instruction'], ['parent', 'Supervisor 3000'], ['PID', '4123']];
+  rows.forEach(([k, v, hi], i) => {
+    const y = 72 + i * 25;
+    if (hi) el(s, 'rect', { x: 28, y: y - 10, width: 259, height: 20, rx: 4, style: 'fill:var(--hi);fill-opacity:.14;stroke:var(--hi);stroke-width:1' });
+    txt(s, 36, y, k, { cls: 'm' });
+    txt(s, 120, y, v, { weight: hi ? 700 : undefined });
+  });
+  const B = (x, y, l, sub, o = {}) => box(s, x, y, 120, 44, { label: l, sub, ...o });
+  B(330, 20, 'R', 'running', { color: 'var(--e2)' });
+  B(560, 20, 'S', 'sleeping', { color: 'var(--e2)' });
+  B(330, 160, 'T', 'stopped', { color: 'var(--hi)', hi: true, tint: 0.2 });
+  B(560, 160, 'gone', 'exited', { color: 'var(--muted-foreground)', dashed: true });
+  arrow(s, 452, 33, 558, 33, {}); txt(s, 505, 24, 'waits', { anchor: 'middle', cls: 'm' });
+  arrow(s, 558, 52, 452, 52, {}); txt(s, 505, 63, 'wakes', { anchor: 'middle', cls: 'm' });
+  arrow(s, 372, 66, 372, 158, { color: 'var(--hi)', width: 2 }); txt(s, 366, 106, 'SIGSTOP', { anchor: 'end', color: 'var(--hi)', weight: 700 });
+  arrow(s, 408, 158, 408, 66, { color: 'var(--hi)', width: 2 }); txt(s, 414, 120, 'SIGCONT', { color: 'var(--hi)', weight: 700 });
+  arrow(s, 575, 66, 452, 166, { color: 'var(--hi)', width: 2 }); txt(s, 530, 100, 'SIGSTOP', { color: 'var(--hi)', weight: 700 });
+  arrow(s, 620, 66, 620, 158, {}); txt(s, 628, 104, 'exits or', { cls: 'm' }); txt(s, 628, 118, 'SIGKILL', { cls: 'm' });
+  arrow(s, 452, 182, 558, 182, {}); txt(s, 505, 172, 'SIGKILL', { anchor: 'middle', cls: 'm' });
+}
+
+/* ---------- Panel 2: the toy test timeline ---------- */
+{
+  const s = $('p2');
+  const yZ = 40, yT = 110;
+  txt(s, 8, yZ, 'zsh', { weight: 700, cls: 'm' }); txt(s, 8, yZ + 14, '(parent)', { cls: 'm' });
+  txt(s, 8, yT, 'train.py', { weight: 700, color: 'var(--e2)' });
+  line(s, `M80,${yZ} H690`, { dashed: true, width: 1 });
+  const segs = [[80, 175, 'run', 'steps 1-6'], [175, 300, 'stop', 'T'], [300, 425, 'run', 'steps 7-17'], [425, 555, 'stop', 'T · btop ran'], [555, 650, 'run', 'steps 18-22']];
+  segs.forEach(([a, b, k, l]) => {
+    if (k === 'run') box(s, a, yT - 14, b - a, 28, { color: 'var(--e2)', tint: 0.3, rx: 3 });
+    else box(s, a, yT - 14, b - a, 28, { color: 'var(--hi)', tint: 0.1, rx: 3, dashed: true });
+    txt(s, (a + b) / 2, yT, l, { anchor: 'middle', color: k === 'stop' ? 'var(--hi)' : undefined, weight: 700 });
+  });
+  const ev = [[175, 'Ctrl+Z', 'suspended', true], [300, 'fg', 'continued', false], [425, 'Ctrl+Z', 'suspended', true], [555, 'fg', 'continued', false]];
+  ev.forEach(([x, key, msg, stop]) => {
+    arrow(s, x, yZ + 6, x, yT - 16, { color: 'var(--hi)', width: 1.6 });
+    txt(s, x, yZ - 12, key, { anchor: 'middle', color: 'var(--hi)', weight: 700 });
+    if (stop) txt(s, x, yT + 28, `kernel tells zsh: "${msg}"`, { anchor: 'middle', color: 'var(--e4)' });
+  });
+  txt(s, 650, yT - 26, 'Ctrl+C', { anchor: 'middle', color: 'var(--destructive)', weight: 700 });
+  cross(s, 668, yT, 'var(--destructive)');
+  txt(s, 365, 165, 'time, left to right (not to scale)', { anchor: 'middle', cls: 'm' });
+}
+
+/* ---------- Panel 3: kernel sequence ---------- */
+{
+  const s = $('p3');
+  const cols = [
+    { x: 110, w: 150, label: 'Supervisor 3000', sub: 'sender and parent', color: 'var(--e1)' },
+    { x: 350, w: 130, label: 'kernel', color: 'var(--e4)' },
+    { x: 590, w: 150, label: 'training 4123', sub: 'the target', color: 'var(--e2)' }];
+  seq(s, cols, [
+    { from: 0, to: 1, text: '1. kill(4123, SIGSTOP)', hi: true },
+    { note: 1, text: '2. marks SIGSTOP pending' },
+    { from: 1, to: 2, text: '3. wakes it to act on it', color: 'var(--e4)' },
+    { note: 2, text: '4. stops: state S to T', color: 'var(--hi)', tint: 0.18 },
+    { from: 1, to: 0, text: '5. SIGCHLD; Wait4 says "stopped"', color: 'var(--e4)' },
+    { note: 2, text: 'kept: memory, files, PID', dashed: true, tint: 0.05 },
+    { from: 0, to: 1, text: '6. kill(4123, SIGCONT)', hi: true },
+    { from: 1, to: 2, text: '7. T to running, at once', color: 'var(--e4)' },
+    { note: 2, text: '8. next instruction runs', color: 'var(--e2)' },
+  ], { top: 74, dy: 36, H: 380 });
+  txt(s, 230, 254, 'seconds or hours later', { anchor: 'middle', cls: 'm' });
+}
+
+/* ---------- Panel 4: Hibernus checkpoint sequence ---------- */
+{
+  const s = $('p4');
+  const cols = [
+    { x: 72, w: 128, label: 'hib checkpoint', sub: 'from the handler', color: 'var(--muted-foreground)' },
+    { x: 245, w: 140, label: 'Supervisor 3000', color: 'var(--e1)' },
+    { x: 445, w: 160, label: 'training 4123', sub: 'with the hook', color: 'var(--e2)' },
+    { x: 628, w: 120, label: 'CRIU 3105', color: 'var(--e3)' }];
+  seq(s, cols, [
+    { from: 0, to: 1, text: '1. checkpoint' },
+    { note: 1, text: 'Running to Checkpointing' },
+    { from: 2, to: 1, text: '2. step 540 done: now?' },
+    { from: 1, to: 2, text: '3. yes, write to dir' },
+    { note: 2, text: '4. writes app checkpoint' },
+    { from: 2, to: 1, text: '5. files written' },
+    { note: 2, text: '6. closes socket, waits', color: 'var(--e2)', tint: 0.2 },
+    { note: 1, text: '7. sees the close' },
+    { from: 1, to: 2, text: '8. SIGSTOP, from outside', hi: true },
+    { note: 1, text: '9. Wait4: stopped' },
+    { from: 1, to: 3, text: '10. runs criu dump -t 4123', color: 'var(--e1)' },
+    { from: 3, to: 2, text: '11. reads memory, files' },
+    { from: 3, to: 2, text: '12. writes images, ends it' },
+    { note: 1, text: '13. uploads, manifest last' },
+    { from: 1, to: 0, text: '14. checkpointed' },
+  ], { top: 70, dy: 30, H: 520 });
+}
+
+/* ---------- Panel 5: orphan goes to PID 1 ---------- */
+{
+  const s = $('p5');
+  const W = 125, H = 34;
+  const frame = (x0, title, after) => {
+    txt(s, x0 + 10, 16, title, { weight: 700 });
+    box(s, x0 + 10, 30, W, H, { label: 'launchd', sub: 'PID 1' });
+    box(s, x0 + 50, 90, W, H, { label: 'zsh', sub: '700' });
+    edge(s, x0 + 30, 64, x0 + 50, 107);
+    if (!after) {
+      box(s, x0 + 90, 150, W, H, { label: 'sh', sub: '812' });
+      edge(s, x0 + 70, 124, x0 + 90, 167);
+      box(s, x0 + 130, 210, W, H, { label: 'sleep', sub: 'parent 812' });
+      edge(s, x0 + 110, 184, x0 + 130, 227);
+    } else {
+      box(s, x0 + 90, 150, W, H, { label: 'sh 812', sub: 'exited', dashed: true, tint: 0.03 });
+      box(s, x0 + 130, 210, W, H, { label: 'sleep', sub: 'parent 1', hi: true, subColor: 'var(--hi)' });
+      line(s, `M${x0 + 22},64 V227 H${x0 + 130}`, { color: 'var(--hi)', width: 2 });
+    }
+  };
+  frame(0, 'while sh runs', false);
+  frame(355, 'after sh exits', true);
+  arrow(s, 300, 140, 352, 140, { label: 'sh exits' });
+}
+
+/* ---------- Panel 6: subreaper ---------- */
+{
+  const s = $('p6');
+  box(s, 20, 20, 130, 36, { label: 'systemd', sub: 'PID 1' });
+  box(s, 60, 84, 170, 44, { label: 'Supervisor 2200', sub: 'subreaper: yes', color: 'var(--e1)', subColor: 'var(--e1)' });
+  edge(s, 36, 56, 60, 106);
+  box(s, 100, 156, 150, 40, { label: 'criu 2310', sub: 'exited', color: 'var(--e3)', dashed: true, tint: 0.04 });
+  edge(s, 80, 128, 100, 176, { dashed: true });
+  el(s, 'rect', { x: 130, y: 212, width: 220, height: 64, rx: 8, style: 'fill:var(--e5);fill-opacity:.06;stroke:var(--e5);stroke-width:1.25;stroke-dasharray:5 3' });
+  txt(s, 140, 222, 'its own PID namespace', { color: 'var(--e5)', size: 10.5 });
+  box(s, 150, 230, 180, 40, { label: 'training 5870', sub: 'stopped, now an orphan', color: 'var(--e2)' });
+  edge(s, 120, 196, 150, 250, { dashed: true });
+  arrow(s, 332, 244, 232, 112, { color: 'var(--hi)', curve: -60, width: 2.2 });
+  txt(s, 244, 74, 'new parent', { color: 'var(--hi)', weight: 700 });
+  el(s, 'rect', { x: 418, y: 22, width: 270, height: 164, rx: 8, style: 'fill:var(--e4);fill-opacity:.06;stroke:var(--e4);stroke-width:1' });
+  const lines = [[0, 'When criu 2310 exits, the kernel:', 'b'], [0, "1. starts at 2310's parent, 2200"], [0, '2. 2200 is a subreaper, so it', 'hi'], [1, 'adopts 5870', 'hi'], [0, '3. if not, keeps walking up'], [0, '4. no subreaper at all? PID 1'], [1, '(systemd) adopts it']];
+  lines.forEach(([ind, t, k], i) => txt(s, 430 + ind * 20, 40 + i * 22, t, { weight: k ? 700 : undefined, color: k === 'hi' ? 'var(--hi)' : undefined, cls: k ? undefined : 'm' }));
+}
+
+/* ---------- Panel 7: attached vs detached ---------- */
+{
+  const s = $('p7');
+  const row = (x0, y, parts) => {
+    // parts: [label, sub, color, dashed]
+    const W = 96, G = 22;
+    parts.forEach((p, i) => {
+      if (!p) return;
+      box(s, x0 + i * (W + G), y, W, 34, { label: p[0], sub: p[1], color: p[2], dashed: p[3], tint: p[3] ? 0.04 : 0.16 });
+    });
+  };
+  const cols = [10, 365];
+  txt(s, 175, 14, 'attached (default)', { anchor: 'middle', weight: 700 });
+  txt(s, 530, 14, 'detached', { anchor: 'middle', weight: 700, color: 'var(--hi)' });
+  line(s, 'M350,6 V246', { width: 1 });
+  const S = ['Supervisor', '2200', 'var(--e1)'], C = ['criu', '2310', 'var(--e3)'], Cx = ['criu', 'exited', 'var(--e3)', true];
+  const T = (sub) => ['training', sub, 'var(--e2)'];
+  const ys = [44, 120, 196], labels = ['right after the restore', 'a second later', 'hours later'];
+  ys.forEach((y, i) => { txt(s, cols[0], y - 9, labels[i], { cls: 'm' }); txt(s, cols[1], y - 9, labels[i], { cls: 'm' }); });
+  const W = 96, G = 22;
+  const chain = (x0, y, a, b) => { if (a) arrow(s, x0 + W, y + 17, x0 + W + G, y + 17, {}); if (b) arrow(s, x0 + 2 * W + G, y + 17, x0 + 2 * (W + G), y + 17, {}); };
+  // attached
+  row(cols[0], ys[0], [S, C, T('stopped')]); chain(cols[0], ys[0], 1, 1);
+  row(cols[0], ys[1], [S, C, T('training')]); chain(cols[0], ys[1], 1, 1);
+  row(cols[0], ys[2], [S, ['criu', 'exits: 0 or 1', 'var(--e3)'], ['training', 'exited', 'var(--e2)', true]]); chain(cols[0], ys[2], 1, 1);
+  // detached
+  row(cols[1], ys[0], [S, C, T('stopped')]); chain(cols[1], ys[0], 1, 1);
+  row(cols[1], ys[1], [S, Cx, T('adopted')]); arrow(s, cols[1] + W - 10, ys[1], cols[1] + 2 * (W + G) + 10, ys[1], { color: 'var(--hi)', curve: 26, width: 2 });
+  row(cols[1], ys[2], [S, null, T('training')]); arrow(s, cols[1] + W, ys[2] + 17, cols[1] + 2 * (W + G), ys[2] + 17, { color: 'var(--e1)' });
+  txt(s, cols[1] + 175, ys[1] - 30 + 5, 'criu exits 0: "restore worked"', { anchor: 'middle', color: 'var(--hi)' });
+}
+
+/* ---------- Panel 8: one process, two numbers ---------- */
+{
+  const s = $('p8');
+  el(s, 'rect', { x: 10, y: 10, width: 370, height: 230, rx: 10, style: 'fill:var(--muted-foreground);fill-opacity:.05;stroke:var(--muted-foreground);stroke-width:1' });
+  txt(s, 22, 26, 'host PID namespace', { weight: 700, cls: 'm' });
+  txt(s, 22, 42, 'counter: next free 4124', { cls: 'm' });
+  box(s, 24, 58, 110, 36, { label: 'systemd', sub: '1' });
+  box(s, 24, 104, 110, 36, { label: 'sshd', sub: '812' });
+  box(s, 160, 58, 200, 40, { label: 'Supervisor', sub: '3000', color: 'var(--e1)' });
+  el(s, 'rect', { x: 150, y: 118, width: 220, height: 112, rx: 10, style: 'fill:var(--e5);fill-opacity:.07;stroke:var(--e5);stroke-width:1.5;stroke-dasharray:5 3' });
+  txt(s, 176, 134, 'its own PID namespace', { weight: 700, color: 'var(--e5)' });
+  txt(s, 176, 150, 'counter: next free 2', { color: 'var(--e5)' });
+  box(s, 170, 166, 180, 50, { label: 'training process', sub: 'here: 1  ·  host: 4123', color: 'var(--e2)', hi: true });
+  edge(s, 162, 98, 170, 191, { color: 'var(--e1)' });
+  // the kernel's record
+  box(s, 410, 40, 280, 176, { color: 'var(--e4)', tint: 0.06 });
+  txt(s, 424, 60, "kernel's PID record for the", { weight: 700, color: 'var(--e4)' });
+  txt(s, 424, 76, 'training process', { weight: 700, color: 'var(--e4)' });
+  const r = [['level 0, host namespace', '4123'], ['level 1, its namespace', '1']];
+  r.forEach(([k, v], i) => {
+    const y = 108 + i * 40;
+    el(s, 'rect', { x: 420, y: y - 14, width: 260, height: 30, rx: 5, style: `fill:${i ? 'var(--e5)' : 'var(--muted-foreground)'};fill-opacity:.12` });
+    txt(s, 430, y + 1, k, { cls: 'm' });
+    txt(s, 668, y + 1, v, { anchor: 'end', weight: 700, size: 14, color: i ? 'var(--e5)' : undefined });
+  });
+  txt(s, 424, 194, 'one number per level, all kept', { cls: 'm' });
+  arrow(s, 352, 191, 418, 150, { color: 'var(--e4)', dashed: true });
+}
+
+/* ---------- Panel 10: without vs with ---------- */
+{
+  const s = $('p10');
+  const W = 200, xs = [10, 250, 490];
+  const flow = (y, title, items) => {
+    txt(s, 10, y - 12, title, { weight: 700 });
+    items.forEach(([l, sub, c, hi, sc], i) => box(s, xs[i], y, W, 50, { label: l, sub, color: c, hi, subColor: sc }));
+    arrow(s, xs[0] + W + 2, y + 25, xs[1] - 2, y + 25, {}); arrow(s, xs[1] + W + 2, y + 25, xs[2] - 2, y + 25, {});
+  };
+  flow(26, 'without a PID namespace', [
+    ['process snapshot', 'training was PID 4123', 'var(--e3)'],
+    ['restore host', 'sshd already has 4123', 'var(--muted-foreground)'],
+    ['criu restore', 'fails: PID in use', 'var(--destructive)', false, 'var(--destructive-foreground)']]);
+  flow(126, 'with a PID namespace', [
+    ['process snapshot', 'PID 1 in its namespace', 'var(--e3)'],
+    ['criu restore', 'new, empty namespace', 'var(--e5)'],
+    ['training process', 'inside 1 · host 5870', 'var(--e2)', true, 'var(--success-foreground)']]);
+}
+
+/* ---------- Panel 11: PID 1 drops its own SIGSTOP ---------- */
+{
+  const s = $('p11');
+  box(s, 20, 70, 160, 44, { label: 'Supervisor 3000', sub: 'outside', color: 'var(--e1)' });
+  el(s, 'rect', { x: 300, y: 14, width: 390, height: 136, rx: 10, style: 'fill:var(--e5);fill-opacity:.06;stroke:var(--e5);stroke-width:1.5;stroke-dasharray:5 3' });
+  txt(s, 312, 30, "training process's PID namespace", { color: 'var(--e5)', weight: 700 });
+  box(s, 430, 80, 180, 44, { label: 'training process', sub: 'PID 1 here', color: 'var(--e2)' });
+  arrow(s, 182, 102, 428, 102, { color: 'var(--hi)', width: 2.2 });
+  txt(s, 240, 90, 'SIGSTOP', { anchor: 'middle', color: 'var(--hi)', weight: 700 }); txt(s, 240, 116, 'delivered', { anchor: 'middle', color: 'var(--success-foreground)', weight: 700 });
+  // self loop
+  el(s, 'path', { d: 'M585,80 C 590,58 645,58 645,76 C 645,92 630,100 612,100', style: 'fill:none;stroke:var(--destructive);stroke-width:1.6;stroke-dasharray:4 3' });
+  txt(s, 590, 46, 'raise_signal(SIGSTOP)', { anchor: 'middle', color: 'var(--destructive-foreground)' });
+  cross(s, 664, 86, 'var(--destructive)');
+  txt(s, 520, 140, 'from inside: dropped by the kernel', { anchor: 'middle', color: 'var(--destructive-foreground)' });
+}
+
+/* ---------- Panel 12: stepper ---------- */
+const SUP = { checkpoint: 3000, restore: 2200 };
+const STEPS = [
+  { host: 'checkpoint', text: '<code>hib run</code> starts the training process in a new PID namespace.', train: { pid: 4123, state: 'R', parent: 'sup' }, conn: 'open', step: '0' },
+  { host: 'checkpoint', text: 'Training runs. At each update boundary, the Supervisor answers "no".', train: { pid: 4123, state: 'R', parent: 'sup' }, conn: 'open', step: '1 to 539' },
+  { host: 'checkpoint', text: 'The disruption handler runs <code>hib checkpoint classifier</code>. The Supervisor switches to Checkpointing.', train: { pid: 4123, state: 'R', parent: 'sup' }, conn: 'open', step: '539' },
+  { host: 'checkpoint', text: 'After step 540, the Supervisor answers yes. The training hook writes the application checkpoint and reports the files.', train: { pid: 4123, state: 'R', parent: 'sup' }, conn: 'open', step: '540' },
+  { host: 'checkpoint', text: 'The training hook sets its SIGCONT handler, closes the connection, and waits.', train: { pid: 4123, state: 'S', parent: 'sup' }, conn: 'closed', step: '540' },
+  { host: 'checkpoint', text: 'The Supervisor sees the close and sends SIGSTOP from outside. Wait4 confirms the stop.', train: { pid: 4123, state: 'T', parent: 'sup' }, conn: 'closed', step: '540', sig: 'SIGSTOP' },
+  { host: 'checkpoint', text: '<code>criu dump -t 4123</code> writes the process snapshot, then ends the training process.', criu: { pid: 3105, verb: 'dump' }, train: { pid: 4123, state: 'gone', parent: 'sup' }, conn: 'closed', step: '540' },
+  { host: 'checkpoint', text: 'The Supervisor uploads the restore point, manifest last. Then the checkpoint host goes away.', conn: 'none', step: '540' },
+  { host: 'restore', text: '<code>hib restore</code> downloads and checks the restore point and the fingerprint. The new Supervisor declares itself a subreaper and listens on the socket.', conn: 'none', step: '540' },
+  { host: 'restore', text: '<code>criu restore --restore-detached</code> recreates the training process in a new PID namespace, still stopped, as CRIU\'s child.', criu: { pid: 2310, verb: 'restore' }, train: { pid: 5870, state: 'T', parent: 'criu' }, conn: 'closed', step: '540' },
+  { host: 'restore', text: 'CRIU exits. The kernel hands the orphan to the nearest subreaper: the Supervisor.', criu: { pid: 2310, verb: 'restore', gone: true }, train: { pid: 5870, state: 'T', parent: 'sup' }, conn: 'closed', step: '540' },
+  { host: 'restore', text: 'The Supervisor sends SIGCONT. The handler sets the flag, and the training hook\'s wait ends.', train: { pid: 5870, state: 'R', parent: 'sup' }, conn: 'closed', step: '540', sig: 'SIGCONT' },
+  { host: 'restore', text: 'The training hook reconnects: "restored after step 540". The Supervisor answers, and training runs step 541.', train: { pid: 5870, state: 'R', parent: 'sup' }, conn: 'open', step: '541' },
+];
+const STATE = { R: 'running', S: 'waiting (S)', T: 'stopped (T)', gone: 'ended by CRIU' };
+
+function drawStep(i) {
+  const s = $('p12'), st = STEPS[i];
+  while (s.firstChild) s.removeChild(s.firstChild);
+  const sup = SUP[st.host];
+  txt(s, 10, 12, st.host === 'checkpoint' ? 'checkpoint host' : 'restore host', { weight: 700, color: 'var(--muted-foreground)' });
+  box(s, 10, 26, 120, 34, { label: 'systemd', sub: 'PID 1' });
+  box(s, 40, 86, 170, 46, { label: `Supervisor ${sup}`, sub: st.host === 'restore' ? 'subreaper' : 'parent', color: 'var(--e1)' });
+  edge(s, 26, 60, 40, 109);
+  if (st.criu) {
+    box(s, 240, 176, 150, 44, { label: `criu ${st.criu.verb}`, sub: st.criu.gone ? `${st.criu.pid} · exited` : `${st.criu.pid}`, color: 'var(--e3)', dashed: st.criu.gone, tint: st.criu.gone ? 0.04 : 0.16 });
+    line(s, 'M60,132 V198 H240', { color: 'var(--e3)', dashed: st.criu.gone });
+  }
+  if (st.train) {
+    const t = st.train, gone = t.state === 'gone';
+    el(s, 'rect', { x: 440, y: 58, width: 250, height: 120, rx: 10, style: 'fill:var(--e5);fill-opacity:.06;stroke:var(--e5);stroke-width:1.25;stroke-dasharray:5 3' });
+    txt(s, 452, 74, 'its own PID namespace', { color: 'var(--e5)' });
+    const sc = t.state === 'T' ? 'var(--hi)' : t.state === 'S' ? 'var(--muted-foreground)' : t.state === 'R' ? 'var(--success-foreground)' : 'var(--destructive-foreground)';
+    box(s, 460, 88, 210, 58, { label: `training ${t.pid}`, sub: `here: 1 · ${STATE[t.state]}`, color: 'var(--e2)', hi: t.state === 'T', dashed: gone, tint: gone ? 0.04 : 0.16, subColor: sc });
+    if (!gone) {
+      if (t.parent === 'sup') line(s, 'M210,109 H330 V117 H460', { color: 'var(--e1)', width: 1.8 });
+      else line(s, 'M390,198 H420 V130 H460', { color: 'var(--e3)', width: 1.8 });
+      txt(s, 565, 162, st.conn === 'open' ? 'connection: open' : 'connection: closed', { anchor: 'middle', cls: st.conn === 'open' ? undefined : 'm', color: st.conn === 'open' ? 'var(--e1)' : undefined });
+    }
+    if (st.sig) {
+      arrow(s, 212, 92, 458, 96, { color: 'var(--hi)', width: 2.4, curve: 10 });
+      txt(s, 330, 76, st.sig, { anchor: 'middle', color: 'var(--hi)', weight: 700 });
+    }
+  } else {
+    el(s, 'rect', { x: 440, y: 58, width: 250, height: 120, rx: 10, style: 'fill:none;stroke:var(--border);stroke-width:1.25;stroke-dasharray:5 3' });
+    txt(s, 565, 118, st.host === 'checkpoint' ? 'no training process' : 'no training process yet', { anchor: 'middle', cls: 'm' });
+  }
+  // fields
+  const t = st.train;
+  const parent = !t || t.state === 'gone' ? 'none' : t.parent === 'sup' ? `Supervisor ${sup}` : `CRIU ${st.criu.pid}`;
+  const f = [['Host', st.host], ['Supervisor', String(sup)], ['Training PID', !t || t.state === 'gone' ? 'none' : `host ${t.pid} · here 1`], ['Parent', parent], ['State', t ? STATE[t.state] : 'none'], ['Connection', st.conn], ['Step', st.step]];
+  $('fields').innerHTML = f.map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
+  $('now').innerHTML = `<b>${i + 1}.</b> ${st.text}`;
+  $('pos').textContent = `${i + 1} / ${STEPS.length}`;
+  [...$('steps').querySelectorAll('tr[data-i]')].forEach(r => r.classList.toggle('cur', +r.dataset.i === i));
+}
+$('steps').innerHTML = '<tr><th>#</th><th>Host</th><th>What happens</th></tr>' + STEPS.map((st, i) => `<tr data-i="${i}"><td>${i + 1}</td><td>${st.host}</td><td>${st.text}</td></tr>`).join('');
+let cur = 0, timer = null;
+const go = i => { cur = Math.max(0, Math.min(STEPS.length - 1, i)); drawStep(cur); };
+const stop = () => { clearInterval(timer); timer = null; $('play').textContent = 'Play'; };
+$('next').onclick = () => { stop(); go(cur + 1); };
+$('prev').onclick = () => { stop(); go(cur - 1); };
+$('reset').onclick = () => { stop(); go(0); };
+$('play').onclick = () => {
+  if (timer) return stop();
+  if (cur === STEPS.length - 1) go(0);
+  $('play').textContent = 'Pause';
+  timer = setInterval(() => { if (cur >= STEPS.length - 1) return stop(); go(cur + 1); }, 1700);
+};
+$('steps').addEventListener('click', e => { const r = e.target.closest('tr[data-i]'); if (r) { stop(); go(+r.dataset.i); } });
+go(window.__START_STEP ?? 0);
+</script></body></html>
