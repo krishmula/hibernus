@@ -112,7 +112,7 @@ v1 targets one training workload on one NVIDIA GPU. The requirements in section 
 ### Open scope questions
 
 - **Inference workloads.** Does v1 cover batch inference too? A disrupted batch inference workload loses its in-flight items and pays its startup cost again.
-- **DataLoader child processes.** Does v1 support `num_workers > 0`? If so, the process snapshot has to capture those processes.
+- **DataLoader child processes.** Decided on 2026-11-21: v1 uses `num_workers = 0`, so the process snapshot holds only the training process.
 
 ## 4. Requirements
 

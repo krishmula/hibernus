@@ -151,16 +151,16 @@ Each Supervisor listens on one Unix socket, named after its workload, such as `/
 
 ### Training hook
 
-The training hook keeps one connection open for the life of the training process.
+The training hook keeps one connection open while it trains.
 
 | When | Hook sends | Supervisor replies |
 |---|---|---|
 | The training process starts | `{"op": "initialize", "fingerprint": {...}, "python": "/path/to/python"}` | After `hib run`: `{"resume": null}`, so training starts at step 0. After a fallback restore: `{"resume": {"step": 1200, "files": [...]}}`, so the hook loads the files and training continues at step 1201. |
 | Each update boundary | `{"op": "boundary", "step": 1200}` | `{"pause": false}` in Running. `{"pause": true, "dir": "..."}` in Checkpointing, where `dir` is the folder for the application checkpoint. A refusal in a final state, so training stops. |
-| After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. The hook waits on the connection, paused. |
-| After a CRIU restore | `{"op": "reconnect", "step": 1200}` | `{"continue": true}` |
+| After `"pause": true` | `{"op": "app_checkpoint", "files": [...]}`, or `{"op": "app_checkpoint", "error": "..."}` if writing failed | No reply. The hook closes the connection and waits for SIGCONT, paused. |
+| After a process snapshot restore | `{"op": "restored", "step": 1200, "fingerprint": {...}, "python": "/path/to/python"}` | `{"continue": true}`, so training continues at step 1201. A refusal if the step doesn't match the restore point. |
 
-The hook's paused wait ends only when the connection breaks. On the checkpoint host, that happens when the host goes away. After a CRIU restore, the training process comes back still waiting on the dead connection, so the hook sees the break, connects to the new Supervisor, and sends `reconnect`.
+The hook keeps one connection open until it pauses. Then it closes the connection and waits for SIGCONT, so the Supervisor can stop it and run `criu dump`. After a process snapshot restore, the restore host's Supervisor sends SIGCONT, and the hook opens a new connection and sends `restored`. `restored` replaces `initialize` for a restored process, because the process wakes up past `initialize`. See [process-snapshot.md](process-snapshot.md).
 
 A Supervisor that can't answer a message, such as one with an unknown `op`, replies `{"refused": "..."}`. The key differs from the `error` field of other replies, so a Failed status never reads as a refusal.
 

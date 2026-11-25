@@ -62,5 +62,9 @@ A small Hibernus library inside the training process that stops the loop at the 
 The GPU model and the driver, CUDA, cuDNN, PyTorch, and kernel versions of a host. A restore runs only on a host whose fingerprint matches the checkpoint host's.
 
 **Initialize**:
-The training hook’s first request to the Supervisor, asking whether to begin fresh or load a restore point. Both fresh training and restore use it.
+The training hook’s first request to the Supervisor, asking whether to begin fresh or load a restore point. Both fresh training and a restore from the application checkpoint use it.
 _Avoid_: start (for this request)
+
+**Restored**:
+The training hook's first request to the Supervisor after a restore from the process snapshot. It tells the Supervisor the step where the training process already is.
+_Avoid_: reconnect (for this request)
