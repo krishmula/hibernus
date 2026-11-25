@@ -5,9 +5,14 @@ messages (see docs/design/data-shapes.md).
 """
 
 import json
+import os
+import shutil
+import signal
 import socket
 import sys
+import tempfile
 import threading
+import time
 
 import pytest
 import torch
@@ -18,33 +23,53 @@ from hibernus.workload import build_trainer
 
 
 class FakeSupervisor:
-    """Answers each message from a table. After `app_checkpoint` it closes the connection, which
-    is how a checkpoint host going away looks to the hook."""
+    """Answers each message from a table, on a real socket. A list in the table gives one answer
+    per request, in order.
+
+    When the hook closes its connection after `app_checkpoint`, the fake sends SIGCONT to this
+    process, as the restore host's Supervisor does after a restore from the process snapshot. Then
+    it serves the hook's new connection, which starts with `restored`.
+    """
 
     def __init__(self, replies):
-        self.replies = replies
+        self.replies = {"restored": {"continue": True}, **replies}
         self.requests = []
-        ours, theirs = socket.socketpair()
-        self.hook = hibernus.Hook.from_socket(ours)
-        self._sock = theirs
+        self._dir = tempfile.mkdtemp(dir="/tmp")  # short, because a socket path must stay under ~100 bytes
+        path = os.path.join(self._dir, "w.sock")
+        self._listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._listener.bind(path)
+        self._listener.listen()
+        self._listener.settimeout(0.1)
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
+        self.hook = hibernus.Hook(path)
 
     def _serve(self):
-        f = self._sock.makefile("rwb")
-        for line in f:
-            request = json.loads(line)
-            self.requests.append(request)
-            if request["op"] == "app_checkpoint":
-                break
-            f.write(json.dumps(self.replies[request["op"]]).encode() + b"\n")
-            f.flush()
-        f.close()
-        self._sock.shutdown(socket.SHUT_RDWR)
-        self._sock.close()
+        while not self._stop.is_set():
+            try:
+                conn, _ = self._listener.accept()
+            except TimeoutError:
+                continue
+            conn.settimeout(None)
+            with conn, conn.makefile("rwb") as f:
+                for line in f:
+                    request = json.loads(line)
+                    self.requests.append(request)
+                    if request["op"] != "app_checkpoint":
+                        reply = self.replies[request["op"]]
+                        if isinstance(reply, list):  # one answer per request, in order
+                            reply = reply.pop(0)
+                        f.write(json.dumps(reply).encode() + b"\n")
+                        f.flush()
+            if self.requests and self.requests[-1]["op"] == "app_checkpoint":
+                os.kill(os.getpid(), signal.SIGCONT)
 
     def finish(self):
+        self._stop.set()
         self._thread.join(timeout=5)
+        self._listener.close()
+        shutil.rmtree(self._dir)
 
 
 def run(trainer, updates):
@@ -58,11 +83,10 @@ def test_a_pause_writes_app_pt_and_reports_it(tmp_path):
     trainer = build_trainer()
     run(trainer, 2)
 
-    with pytest.raises(ConnectionError):  # the hook waits until the host goes away
-        sup.hook.boundary(2, {"trainer": trainer})
+    sup.hook.boundary(2, {"trainer": trainer})
     sup.finish()
 
-    assert sup.requests == [
+    assert sup.requests[:2] == [
         {"op": "boundary", "step": 2},
         {"op": "app_checkpoint", "files": [str(app / "app.pt")]},
     ]
@@ -94,11 +118,55 @@ def test_a_failed_write_is_reported_to_the_supervisor(tmp_path, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(torch, "save", disk_full)
-    with pytest.raises(ConnectionError):
-        sup.hook.boundary(1, {"trainer": trainer})
+    sup.hook.boundary(1, {"trainer": trainer})
     sup.finish()
 
     assert sup.requests[1] == {"op": "app_checkpoint", "error": "disk full"}
+
+
+def test_after_sigcont_the_hook_sends_restored_and_training_continues(tmp_path):
+    sup = FakeSupervisor({"boundary": [{"pause": True, "dir": str(tmp_path)}, {"pause": False}]})
+
+    sup.hook.boundary(7)  # returns only after SIGCONT and the Supervisor's answer to restored
+    sup.hook.boundary(8)
+    sup.finish()
+
+    assert [r["op"] for r in sup.requests] == ["boundary", "app_checkpoint", "restored", "boundary"]
+    restored = sup.requests[2]
+    assert restored["step"] == 7
+    assert restored["fingerprint"] == fingerprint.collect()
+    assert restored["python"] == sys.executable
+    assert sup.requests[3] == {"op": "boundary", "step": 8}
+
+
+def test_the_pause_lasts_until_sigcont(tmp_path, monkeypatch):
+    sup = FakeSupervisor({"boundary": {"pause": True, "dir": str(tmp_path)}})
+    # This fake never sends SIGCONT itself. After 0.5 s, raise_signal sends it to the timer's own
+    # thread, not the main thread, as the kernel may do. A bare woke.wait() would never see it.
+    monkeypatch.setattr(os, "kill", lambda pid, signum: None)
+    timer = threading.Timer(0.5, signal.raise_signal, [signal.SIGCONT])
+    start = time.monotonic()
+    timer.start()
+
+    sup.hook.boundary(7)
+    sup.finish()
+
+    assert time.monotonic() - start >= 0.5
+    assert sup.requests[-1]["op"] == "restored"
+    assert signal.getsignal(signal.SIGCONT) == signal.SIG_DFL  # the hook put the old handler back
+
+
+def test_a_refused_restored_stops_training(tmp_path):
+    sup = FakeSupervisor(
+        {
+            "boundary": {"pause": True, "dir": str(tmp_path)},
+            "restored": {"refused": "the training process is at step 7, but the restore point holds step 6"},
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="refused restored"):
+        sup.hook.boundary(7)
+    sup.finish()
 
 
 def test_initialize_after_a_restore_loads_the_trainer_and_returns_the_step(tmp_path):
@@ -177,8 +245,7 @@ def test_without_state_the_stand_in_step_file_still_works(tmp_path):
     app = tmp_path / "app"
     sup = FakeSupervisor({"boundary": {"pause": True, "dir": str(app)}})
 
-    with pytest.raises(ConnectionError):
-        sup.hook.boundary(7)
+    sup.hook.boundary(7)
     sup.finish()
 
     assert json.loads((app / "step.json").read_text()) == {"step": 7}
@@ -212,8 +279,7 @@ def test_a_plain_loop_pauses_and_restores_to_the_same_losses(tmp_path):
     sup = FakeSupervisor({"boundary": {"pause": True, "dir": str(app)}})
     state, update = plain_loop(seed=0)
     before = [update(step) for step in range(3)]
-    with pytest.raises(ConnectionError):
-        sup.hook.boundary(3, state, {"batch_size": 1})
+    sup.hook.boundary(3, state, {"batch_size": 1})
     sup.finish()
 
     files = sup.requests[1]["files"]
