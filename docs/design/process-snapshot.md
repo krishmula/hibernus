@@ -42,10 +42,13 @@ Settled on 2026-11-24.
 | 3 | Which layer does `hib restore` use? | The process snapshot first, with the fallbacks above. It reports which layer it used | The process snapshot is faster and exact. The phase 5 check needs the report |
 | 4 | How does the restore host's Supervisor become the training process's parent? | A subreaper, with `criu restore --restore-detached` | `--restore-sibling` also passed the test, but CRIU warns that some kernels don't support it |
 | 5 | Where do the training process's input and output go? | Input from `/dev/null`. Output to a file in the run directory, which goes to the restore host with the process snapshot. `hib run` and `hib restore` copy its new lines to their output | CRIU can't restore a terminal that belongs to a process outside the snapshot. CRIU reopens a file by its path, and the test confirmed it. CRIU doesn't keep the file's contents, so `hib` copies the file |
-| 6 | What do Ctrl+C and SIGTERM do? | The Supervisor passes SIGINT and SIGTERM to the training process. The training hook installs a SIGTERM handler. After a grace period, the Supervisor sends SIGKILL | In its own session, the training process no longer gets Ctrl+C from the terminal. The kernel drops a signal to PID 1 of a namespace unless the process handles it. Python handles SIGINT by default but not SIGTERM |
+| 6 | What do Ctrl+C and SIGTERM do? | The Supervisor passes SIGINT and SIGTERM to the training process. The training hook installs a SIGTERM handler. After 10 s, the Supervisor sends SIGKILL | In its own session, the training process no longer gets Ctrl+C from the terminal. The kernel drops a signal to PID 1 of a namespace unless the process handles it. Python handles SIGINT by default but not SIGTERM |
 | 7 | What if CRIU is missing or too old? | `hib` requires CRIU 3.17 or later. Without it, the checkpoint host writes only the application checkpoint, with a warning, and the restore host uses the application checkpoint | CRIU 3.16 can't restore rseq, which glibc 2.35 turns on, so the restored process crashes. Training never depends on CRIU |
 
-## Open questions
+## Parked
 
-- If the Supervisor dies while the training process waits for SIGCONT, nothing ends the wait. Decide whether that matters for v1, since the host is about to go away anyway.
-- The grace period before SIGKILL in decision 6.
+Not an immediate problem, so it waits until after phase 5.
+
+- **The Supervisor dies while the training process waits for SIGCONT.** The training hook closed its connection, so it can't see that the Supervisor died.
+  - If the Supervisor died before SIGSTOP, the training process keeps waiting. A fix: the Supervisor always sends SIGSTOP, even without CRIU, and the training hook exits after 600 waits of 100 ms. A count works where a clock time limit wouldn't, because the count doesn't advance while the process is stopped or across a restore.
+  - If the Supervisor died after SIGSTOP, the training process stays stopped, and nothing inside it can run. It uses memory but no CPU. In a real disruption, the host goes away soon after. A parent-death signal would end it, but CRIU restores that setting, so `criu`'s own exit in detached mode would kill the restored training process.
