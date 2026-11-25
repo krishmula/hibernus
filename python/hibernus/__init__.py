@@ -22,6 +22,7 @@ class Hook:
     def __init__(self, socket_path):
         self._socket_path = socket_path
         self._attach(_connect(socket_path))
+        _exit_on_sigterm()
 
     def _attach(self, sock):
         self._sock = sock
@@ -110,6 +111,19 @@ class Hook:
     def _write(self, message):
         self._file.write(json.dumps(message).encode() + b"\n")
         self._file.flush()
+
+
+def _exit_on_sigterm():
+    """Makes SIGTERM end training, as Ctrl+C does. hib passes SIGTERM on to the training process,
+    which runs on Linux as PID 1 of its own PID namespace. The kernel drops a signal to PID 1 unless
+    the process handles it, so without a handler SIGTERM would do nothing. A SIGTERM handler that the
+    training script installed stays."""
+    if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+        signal.signal(signal.SIGTERM, _sigterm)
+
+
+def _sigterm(signum, frame):
+    sys.exit(128 + signum)  # the shell's convention: 143 for SIGTERM
 
 
 def _connect(socket_path):

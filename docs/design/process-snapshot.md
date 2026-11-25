@@ -4,7 +4,7 @@ How phase 5 makes the process snapshot on the checkpoint host and restores it on
 
 ## Checkpoint host
 
-1. `hib run` starts the training process as PID 1 of a new PID namespace, in a new session. It stays the Supervisor's direct child. Its stdin reads from `/dev/null`, and its stdout and stderr go to a file in the run directory. `hib run` copies new lines from that file to its own output.
+1. `hib run` starts the training process as PID 1 of a new PID namespace, in a new session. It stays the Supervisor's direct child. Its stdin reads from `/dev/null`, and its stdout and stderr go to `<workload>.log` in the run directory. `hib run` copies new lines from that file to its own output. A new PID namespace needs root, and so does CRIU, so without root `hib run` skips the namespace and the restore point holds only the application checkpoint.
 2. At the update boundary, the training hook writes the application checkpoint and sends `app_checkpoint`, as today.
 3. The training hook installs a SIGCONT handler that sets a flag, closes its connection, and waits for the flag in 100 ms slices.
 4. The Supervisor sees the connection close and sends SIGSTOP. The signal must come from outside the namespace, because PID 1 of a namespace ignores SIGSTOP sent from inside it.

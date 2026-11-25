@@ -51,6 +51,7 @@ func (a *attempt) resolve(result protocol.CheckpointReply) {
 
 // checkpoint handles one hib checkpoint request and waits for its answer.
 func (s *Supervisor) checkpoint(deadline time.Time) protocol.CheckpointReply {
+	// Start a checkpoint attempt or join the one already underway.
 	a := s.join(deadline)
 	<-a.done
 	return a.result

@@ -169,6 +169,34 @@ def test_a_refused_restored_stops_training(tmp_path):
     sup.finish()
 
 
+@pytest.fixture
+def sigterm_handler():
+    previous = signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    yield
+    signal.signal(signal.SIGTERM, previous)
+
+
+def test_under_hib_sigterm_ends_training_with_143(sigterm_handler):
+    sup = FakeSupervisor({})
+    sup.finish()
+
+    assert signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL  # else raise_signal ends pytest
+    with pytest.raises(SystemExit) as stopped:
+        signal.raise_signal(signal.SIGTERM)
+    assert stopped.value.code == 143
+
+
+def test_the_training_scripts_own_sigterm_handler_stays(sigterm_handler):
+    def own(signum, frame):
+        pass
+
+    signal.signal(signal.SIGTERM, own)
+    sup = FakeSupervisor({})
+    sup.finish()
+
+    assert signal.getsignal(signal.SIGTERM) is own
+
+
 def test_initialize_after_a_restore_loads_the_trainer_and_returns_the_step(tmp_path):
     original = build_trainer()
     run(original, 3)

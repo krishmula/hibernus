@@ -99,7 +99,7 @@ type Refusal struct {
 	Reason string `json:"refused"`
 }
 
-// RunDir returns the folder path used for workload sockets. It uses HIB_RUN_DIR
+// RunDir returns the folder path used for workload sockets and output files. It uses HIB_RUN_DIR
 // when nonempty; otherwise, it uses hib-<user ID> inside the OS temporary folder.
 // It does not create the folder or check whether the folder or sockets exist.
 func RunDir() string {
@@ -111,6 +111,11 @@ func RunDir() string {
 
 func SocketPath(workload string) string {
 	return filepath.Join(RunDir(), workload+".sock")
+}
+
+// OutputPath is the file the training process writes its stdout and stderr to.
+func OutputPath(workload string) string {
+	return filepath.Join(RunDir(), workload+".log")
 }
 
 // Send sends one request and reads one reply into reply.

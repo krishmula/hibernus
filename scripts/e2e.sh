@@ -27,15 +27,22 @@ expect_exit() {
 	[ "$code" -eq "$want" ] || fail "$* exited $code, want $want: $(cat "$work/out")"
 }
 
+# wait_for_step waits until workload $1 passes step $2. hib status exits 3 until the Supervisor
+# listens, so a failed status only means another try.
+wait_for_step() {
+	local step
+	for _ in $(seq 100); do
+		step=$("$hib" status --workload "$1" 2>/dev/null | sed -n 's/^step: //p' || true)
+		[ "${step:-0}" -ge "$2" ] && return
+		sleep 0.1
+	done
+	fail "workload $1 never reached step $2"
+}
+
 # 1. Start the workload, and wait until it passes step 3.
 "$hib" run --workload e2e --store "$store" "$python" examples/toy/train.py --steps $steps --step-seconds 0.1 >"$work/run.log" 2>"$work/run.err" &
 run_pid=$!
-for _ in $(seq 100); do
-	step=$("$hib" status --workload e2e 2>/dev/null | sed -n 's/^step: //p')
-	[ "${step:-0}" -ge 3 ] && break
-	sleep 0.1
-done
-[ "${step:-0}" -ge 3 ] || fail "training never reached step 3"
+wait_for_step e2e 3
 
 # 2. Checkpoint. hib checkpoint prints the restore point location.
 location=$("$hib" checkpoint --workload e2e --deadline 10s) || fail "hib checkpoint exited $?"
@@ -74,5 +81,19 @@ grep -q '^step ' "$work/out" && fail "training started on a host whose fingerpri
 "$hib" restore --store "$store" "$location" >"$work/restore.log" || fail "hib restore exited $?: $(cat "$work/restore.log")"
 [ "$(head -1 "$work/restore.log")" = "step $((k + 1))" ] || fail "restore began at '$(head -1 "$work/restore.log")', want 'step $((k + 1))'"
 [ "$(tail -1 "$work/restore.log")" = "step $steps" ] || fail "restore ended at '$(tail -1 "$work/restore.log")', want 'step $steps'"
+
+# 8. The training process runs in its own session, so Ctrl+C at the terminal reaches only hib. hib
+# passes SIGINT and SIGTERM on, and exits with the training process's code.
+for sig in INT TERM; do
+	"$hib" run --workload signals --store "$store" "$python" examples/toy/train.py --steps 1000 --step-seconds 0.1 >"$work/signals.log" 2>&1 &
+	pid=$!
+	wait_for_step signals 1
+	kill -"$sig" "$pid"
+	code=0
+	wait "$pid" || code=$?
+	want=130 # 128 + SIGINT, from KeyboardInterrupt
+	[ "$sig" = TERM ] && want=143 # 128 + SIGTERM, from the training hook's handler
+	[ "$code" -eq "$want" ] || fail "after SIG$sig, hib run exited $code, want $want: $(cat "$work/signals.log")"
+done
 
 echo "e2e passed: checkpointed at step $k, restored at step $((k + 1))"

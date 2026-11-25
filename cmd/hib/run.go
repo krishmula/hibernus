@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/krishmula/hibernus/internal/manifest"
@@ -22,6 +24,13 @@ const runUsage = "usage: hib run [--workload <name>] [--store <folder>] [--remot
 // closeGrace is how long hib run waits, after the training process exits, for each waiting
 // hib checkpoint to read its answer.
 const closeGrace = 2 * time.Second
+
+// killGrace is how long the training process has to exit after hib passes it SIGINT or SIGTERM.
+// After that, hib sends SIGKILL.
+const killGrace = 10 * time.Second
+
+// outputPoll is how often hib looks for new output from the training process.
+const outputPoll = 50 * time.Millisecond
 
 func runCommand(args []string) int {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -105,21 +114,43 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 		close(served)
 	}()
 
-	child := trainingProcess(cfg.Command, socketPath)
-
-	// Ctrl-C reaches the training process too, because it shares the terminal. hib catches the
-	// signal and never reads it, so hib keeps running until the training process exits, and then
-	// exits with that process's code.
-	interrupts := make(chan os.Signal, 1)
-	signal.Notify(interrupts, os.Interrupt)
-	defer signal.Stop(interrupts)
-
-	if err := child.Start(); err != nil {
+	// The training process writes to a file, not to hib's terminal, because CRIU can't restore a
+	// terminal that belongs to a process outside the snapshot. hib copies the file to its own output.
+	outputPath := protocol.OutputPath(cfg.Workload)
+	output, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|os.O_APPEND, 0o600)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "hib: %v\n", err)
 		return exitFailed
 	}
+	reader, err := os.Open(outputPath)
+	if err != nil {
+		output.Close()
+		fmt.Fprintf(os.Stderr, "hib: %v\n", err)
+		return exitFailed
+	}
+	defer reader.Close()
+
+	child := trainingProcess(cfg.Command, socketPath, output)
+
+	// The training process runs in its own session, so Ctrl+C at the terminal reaches only hib.
+	// hib passes it on, along with SIGTERM.
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	err = child.Start()
+	output.Close() // the training process has its own copy
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hib: %v\n", err)
+		return exitFailed
+	}
+	stopCopy := copyOutput(reader, os.Stdout)
+	exited := make(chan struct{})
+	go relaySignals(signals, child.Process, killGrace, exited)
 
 	code := childExitCode(child.Wait())
+	close(exited)
+	stopCopy()
 	sup.ChildExited(code)
 	sup.Settle() // an upload in flight must finish before hib exits
 
@@ -131,16 +162,60 @@ func supervise(cfg supervisor.Config, resume *protocol.Resume) int {
 	return code
 }
 
-// trainingProcess prepares the training process. It shares hib's terminal, and its environment
-// tells the training hook where the socket is.
-func trainingProcess(command manifest.Command, socketPath string) *exec.Cmd {
+// trainingProcess prepares the training process. It reads from /dev/null and writes to output, and
+// its environment tells the training hook where the socket is.
+func trainingProcess(command manifest.Command, socketPath string, output *os.File) *exec.Cmd {
 	child := exec.Command(command.Argv[0], command.Argv[1:]...)
 	child.Dir = command.Cwd
-	child.Env = append(os.Environ(), protocol.SocketEnv+"="+socketPath)
-	child.Stdin = os.Stdin
-	child.Stdout = os.Stdout
-	child.Stderr = os.Stderr
+	// Python buffers output to a file in large blocks, so without PYTHONUNBUFFERED a print would
+	// reach hib's output long after it ran.
+	child.Env = append(os.Environ(), protocol.SocketEnv+"="+socketPath, "PYTHONUNBUFFERED=1")
+	child.Stdout = output
+	child.Stderr = output
+	isolate(child)
 	return child
+}
+
+// copyOutput copies what the training process writes to w as it arrives, until stop is called.
+// stop copies what is left, then returns.
+func copyOutput(r io.Reader, w io.Writer) (stop func()) {
+	quit := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			io.Copy(w, r) // stops at the end of what the training process has written so far
+			select {
+			case <-quit:
+				io.Copy(w, r)
+				return
+			case <-time.After(outputPoll):
+			}
+		}
+	}()
+	return func() {
+		close(quit)
+		<-done
+	}
+}
+
+// relaySignals passes each signal to the training process until exited closes. If the training
+// process still runs grace after the first signal, relaySignals kills it.
+func relaySignals(signals <-chan os.Signal, process *os.Process, grace time.Duration, exited <-chan struct{}) {
+	var kill <-chan time.Time
+	for {
+		select {
+		case sig := <-signals:
+			process.Signal(sig)
+			if kill == nil {
+				kill = time.After(grace)
+			}
+		case <-kill:
+			process.Kill()
+		case <-exited:
+			return
+		}
+	}
 }
 
 // childExitCode turns the result of Wait into the exit code hib run passes on.
@@ -149,8 +224,15 @@ func childExitCode(err error) int {
 		return exitOK
 	}
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() >= 0 {
-		return exitErr.ExitCode()
+	if errors.As(err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			// The shell's convention, so a training process killed by SIGKILL makes hib exit 137.
+			fmt.Fprintf(os.Stderr, "hib: the training process ended on %v\n", status.Signal())
+			return 128 + int(status.Signal())
+		}
+		if exitErr.ExitCode() >= 0 {
+			return exitErr.ExitCode()
+		}
 	}
 	fmt.Fprintf(os.Stderr, "hib: training process %v\n", err)
 	return exitFailed
