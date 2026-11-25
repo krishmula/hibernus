@@ -2,8 +2,10 @@
 
 import json
 import os
+import signal
 import socket
 import sys
+import threading
 
 SOCKET_ENV = "HIB_SOCKET"
 
@@ -18,16 +20,8 @@ class Hook:
     """Talks to the Supervisor over its socket."""
 
     def __init__(self, socket_path):
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(socket_path)
-        self._attach(sock)
-
-    @classmethod
-    def from_socket(cls, sock):
-        """A hook on a connection that is already open. Tests use it with a fake Supervisor."""
-        hook = cls.__new__(cls)
-        hook._attach(sock)
-        return hook
+        self._socket_path = socket_path
+        self._attach(_connect(socket_path))
 
     def _attach(self, sock):
         self._sock = sock
@@ -44,11 +38,7 @@ class Hook:
         `config` holds plain values that must not change across a restore, such as the shuffle
         seed and batch size. A restore whose config differs is refused before anything changes.
         """
-        # Imported here, so `python -m hibernus.fingerprint` doesn't find it already loaded and warn.
-        from hibernus import fingerprint
-
-        # The interpreter lets hib restore collect the restore host's fingerprint the same way.
-        reply = self._send({"op": "initialize", "fingerprint": fingerprint.collect(), "python": sys.executable})
+        reply = self._send({"op": "initialize", **_host()})
         resume = reply["resume"]
         if resume is None:
             return 0
@@ -80,10 +70,32 @@ class Hook:
             self._write({"op": "app_checkpoint", "files": [path]})
         except Exception as e:  # tell the Supervisor why, whatever went wrong
             self._write({"op": "app_checkpoint", "error": str(e)})
-        # Stay paused. The Supervisor never answers, so this wait ends only when the connection
-        # breaks, which means the host went away.
-        self._file.readline()
-        raise ConnectionError("the Supervisor went away while training was paused")
+        self._pause()
+        # Only a restore from the process snapshot gets here. The training process woke up at
+        # this step, so the training loop continues at the next one.
+        self._attach(_connect(self._socket_path))
+        reply = self._send({"op": "restored", "step": step, **_host()})
+        if reply.get("continue") is not True:
+            raise RuntimeError(f"the Supervisor answered restored with {reply}")
+
+    def _pause(self):
+        """Closes the connection, and waits until SIGCONT arrives.
+
+        Once the connection closes, the Supervisor stops this process, and CRIU dumps it into the
+        process snapshot. On the checkpoint host, the wait never ends: CRIU ends the process, or
+        the host goes away. On the restore host, the Supervisor sends SIGCONT after criu restore.
+        """
+        woke = threading.Event()
+        previous = signal.signal(signal.SIGCONT, lambda signum, frame: woke.set())
+        try:
+            self._file.close()
+            self._sock.close()
+            # Wait in slices. The kernel may hand SIGCONT to any thread, and CPython runs the
+            # handler only when the main thread runs Python, so a bare woke.wait() can sleep forever.
+            while not woke.wait(0.1):
+                pass
+        finally:
+            signal.signal(signal.SIGCONT, previous)
 
     def _send(self, message):
         self._write(message)
@@ -98,6 +110,21 @@ class Hook:
     def _write(self, message):
         self._file.write(json.dumps(message).encode() + b"\n")
         self._file.flush()
+
+
+def _connect(socket_path):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(socket_path)
+    return sock
+
+
+def _host():
+    """The fingerprint of the host the training process runs on, and the interpreter. The
+    interpreter lets hib restore collect the restore host's fingerprint the same way."""
+    # Imported here, so `python -m hibernus.fingerprint` doesn't find it already loaded and warn.
+    from hibernus import fingerprint
+
+    return {"fingerprint": fingerprint.collect(), "python": sys.executable}
 
 
 def _load_step(files, step):

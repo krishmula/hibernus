@@ -173,6 +173,8 @@ func (s *Supervisor) handle(req protocol.Request) any {
 		return s.status()
 	case protocol.OpInitialize:
 		return s.initialize(req.Fingerprint, req.Python)
+	case protocol.OpRestored:
+		return s.restored(req.Step, req.Fingerprint, req.Python)
 	case protocol.OpBoundary:
 		return s.boundary(req.Step)
 	case protocol.OpAppCheckpoint:
@@ -201,24 +203,54 @@ func (s *Supervisor) status() protocol.StatusReply {
 // fingerprint the hook sends, for the manifests of later checkpoints. hib restore has already
 // compared this host's fingerprint with the restore point's before it started the training process.
 func (s *Supervisor) initialize(fingerprint *manifest.Fingerprint, python string) any {
-	if fingerprint == nil || python == "" {
-		return protocol.Refusal{Reason: "initialize carries no fingerprint and python; update the training hook"}
+	if refusal := s.keepHost("initialize", fingerprint, python); refusal != nil {
+		return refusal
 	}
-	if err := fingerprint.Complete(); err != nil {
-		return protocol.Refusal{Reason: err.Error()}
-	}
-	s.host = &host{fingerprint: *fingerprint, python: python}
 	// Only a restore from the application checkpoint reaches this point in Restoring: the training
 	// process starts over, and s.resume tells it which step to load. A restored process snapshot
 	// never sends initialize. It wakes up already past it.
 	if s.state == Restoring {
-		s.state = Running
-		if s.attempt != nil {
-			// A hib checkpoint arrived during Restoring and waits. Start it now.
-			s.state = Checkpointing
-		}
+		s.endRestoring()
 	}
 	return protocol.InitializeReply{Resume: s.resume}
+}
+
+// restored answers a training process that a restore from the process snapshot brought back. It
+// woke up at the step the restore point holds, so it never asks initialize. The training hook
+// waits for this answer before it trains, so a refusal here leaves nothing half done.
+func (s *Supervisor) restored(step int, fingerprint *manifest.Fingerprint, python string) any {
+	if s.state != Restoring {
+		return protocol.Refusal{Reason: fmt.Sprintf("restored arrives only during a restore, and the workload is %s", s.state)}
+	}
+	if step != s.step {
+		return protocol.Refusal{Reason: fmt.Sprintf("the training process is at step %d, but the restore point holds step %d", step, s.step)}
+	}
+	if refusal := s.keepHost("restored", fingerprint, python); refusal != nil {
+		return refusal
+	}
+	s.endRestoring()
+	return protocol.RestoredReply{Continue: true}
+}
+
+// keepHost checks and keeps the fingerprint the training hook sends, for the manifests of later
+// checkpoints.
+func (s *Supervisor) keepHost(op string, fingerprint *manifest.Fingerprint, python string) *protocol.Refusal {
+	if fingerprint == nil || python == "" {
+		return &protocol.Refusal{Reason: op + " carries no fingerprint and python; update the training hook"}
+	}
+	if err := fingerprint.Complete(); err != nil {
+		return &protocol.Refusal{Reason: err.Error()}
+	}
+	s.host = &host{fingerprint: *fingerprint, python: python}
+	return nil
+}
+
+// endRestoring moves to Running, or begins a hib checkpoint that arrived during Restoring and waits.
+func (s *Supervisor) endRestoring() {
+	s.state = Running
+	if s.attempt != nil {
+		s.state = Checkpointing
+	}
 }
 
 func (s *Supervisor) boundary(step int) any {

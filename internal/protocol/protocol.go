@@ -29,6 +29,7 @@ const (
 	OpInitialize    Op = "initialize"
 	OpBoundary      Op = "boundary"
 	OpAppCheckpoint Op = "app_checkpoint"
+	OpRestored      Op = "restored"
 )
 
 // Request holds the fields for every message sent to the Supervisor. Op selects
@@ -40,6 +41,7 @@ const (
 //	{"op":"boundary","step":12}                      // training hook reports an update boundary
 //	{"op":"app_checkpoint","files":["/path/step.json"]} // training hook reports the files it wrote
 //	{"op":"app_checkpoint","error":"disk full"}      // training hook reports a write failure
+//	{"op":"restored","step":12,"fingerprint":{...},"python":"/venv/bin/python"} // training hook is back from a process snapshot
 //
 // The socket path selects the workload, so requests need no workload name or PID.
 type Request struct {
@@ -49,7 +51,8 @@ type Request struct {
 	Files    []string  `json:"files,omitempty"`
 	Error    string    `json:"error,omitempty"`
 
-	// Initialize carries the fingerprint of the checkpoint host and the interpreter that collected it.
+	// Initialize and restored carry the fingerprint of the host the training process runs on, and
+	// the interpreter that collected it.
 	Fingerprint *manifest.Fingerprint `json:"fingerprint,omitempty"`
 	Python      string                `json:"python,omitempty"`
 }
@@ -75,6 +78,11 @@ type Resume struct {
 type BoundaryReply struct {
 	Pause bool   `json:"pause"`
 	Dir   string `json:"dir,omitempty"`
+}
+
+// RestoredReply lets a training process restored from the process snapshot continue training.
+type RestoredReply struct {
+	Continue bool `json:"continue"`
 }
 
 type CheckpointReply struct {

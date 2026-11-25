@@ -255,3 +255,22 @@ func TestGiveUpAt(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoredBeginsACheckpointQueuedDuringRestoring(t *testing.T) {
+	_, path := restoreFromSnapshot(t)
+	answer := requestCheckpoint(t, path, 5*time.Second)
+	time.Sleep(50 * time.Millisecond)
+
+	if _, err := restored(path, 7); err != nil {
+		t.Fatalf("restored: %v", err)
+	}
+	if got := status(t, path); got.State != "Checkpointing" {
+		t.Fatalf("state after restored = %s, want the queued checkpoint to begin", got.State)
+	}
+
+	reply := boundary(t, path, 8)
+	writeStepFile(t, path, reply.Dir, 8)
+	if got := receive(t, answer); !got.OK || got.Manifest.Step != 8 {
+		t.Fatalf("queued checkpoint = %+v, want a restore point at step 8", got)
+	}
+}
