@@ -208,6 +208,9 @@ func (s *Supervisor) initialize(fingerprint *manifest.Fingerprint, python string
 		return protocol.Refusal{Reason: err.Error()}
 	}
 	s.host = &host{fingerprint: *fingerprint, python: python}
+	// Only a restore from the application checkpoint reaches this point in Restoring: the training
+	// process starts over, and s.resume tells it which step to load. A restored process snapshot
+	// never sends initialize. It wakes up already past it.
 	if s.state == Restoring {
 		s.state = Running
 		if s.attempt != nil {
