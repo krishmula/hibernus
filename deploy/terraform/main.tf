@@ -83,7 +83,7 @@ data "aws_iam_policy_document" "hibernus" {
     ]
     resources = ["${aws_s3_bucket.restore_points.arn}/*"]
   }
-  
+
   statement {
     sid       = "HibernusRestorePointBucket"
     actions   = ["s3:ListBucket"]

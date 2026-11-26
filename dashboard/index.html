@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkpoint Recovery Dashboard</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* Layout: one dense column, summary first (header + lifecycle), then before/after panes, then telemetry and log. */
+  :root {
+    --bg: #09090B;       /* page */
+    --card: #18181B;     /* cards */
+    --line: #27272A;     /* 1px borders */
+    --fg: #FAFAFA;
+    --muted: #A1A1AA;
+    --dim: #71717A;
+    --blue: #3B82F6;     /* active training */
+    --emerald: #10B981;  /* verified / synced */
+    --amber: #F59E0B;    /* disruption */
+    color-scheme: dark;
+  }
+  body { background: var(--bg); color: var(--fg); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+  .gutter {
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 24px 48px;
+  }
+  .log-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+  .log-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+  @media (prefers-reduced-motion: reduce) { .animate-pulse, .animate-spin { animation: none !important; } }
+</style>
+
+<div id="root"></div>
+
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: { fontFamily: {
+      sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace']
+    } } }
+  };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script>window.react = window.React;</script>
+<script src="https://unpkg.com/lucide-react@0.469.0/dist/umd/lucide-react.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+
+<script type="text/plain" id="app-src">
+const { useState, useEffect, useRef, useReducer } = React;
+const LUCIDE: any = (window as any).LucideReact || {};
+
+function Icon({ name, size = 16, className = '' }: { name: string; size?: number; className?: string }) {
+  const C = LUCIDE[name] || LUCIDE.Circle || (() => null);
+  return <C size={size} className={className} strokeWidth={2} aria-hidden="true" />;
+}
+
+/* ---------- types ---------- */
+type Status = 'Running' | 'Disrupted' | 'Checkpointing' | 'Recovered';
+type Tone = 'ok' | 'warn' | 'info' | 'mute';
+interface AppState { epoch: number; epochTotal: number; step: number; loss: number; lr: number; shard: number; shardTotal: number; offset: number; rng: string }
+interface SysState { pid: number; vram: number; ram: number; fds: number; ranks: string; barrier: number }
+interface Snapshot { id: string; step: number; attempt: number; takenAt: number; app: AppState; sys: SysState }
+interface Point { step: number; loss: number; seg: number; replay: boolean }
+interface LogLine { id: number; t: string; level: 'INFO' | 'OK' | 'WARN' | 'ERROR' | 'STEP'; src: string; msg: string }
+interface Delta { text: string; tone: Tone }
+interface Row { label: string; before: string; after: string | null; beforeSub?: string; afterSub?: string; delta: Delta | null; wrap?: boolean }
+interface SimState {
+  phase: number; status: Status; attempt: number; step: number; maxStep: number; busy: boolean;
+  disruptStep: number | null; ckpt: Snapshot; ckpts: { step: number; attempt: number }[];
+  restored: { snapshot: Snapshot; app: AppState; sys: SysState } | null;
+  recovery: { stepsLost: number; restoreMs: number } | null;
+  replayUntil: number | null; seg: number; history: Point[]; logs: LogLine[];
+  total: number; live: boolean;
+}
+
+/* ---------- deterministic training model ---------- */
+const JOB = 'run-llama3-70b-fsdp';
+const REMOTE = 's3://hibernus-restore-points-nitish-01';
+const TOTAL = 25000, EPOCH_STEPS = 6400, GLOBAL_BATCH = 512, SHARD = 131072;
+const EPOCH_SAMPLES = EPOCH_STEPS * GLOBAL_BATCH, CKPT_EVERY = 200;
+const C = { blue: '#3B82F6', emerald: '#10B981', amber: '#F59E0B', grid: '#27272A', axis: '#71717A' };
+
+const fmt = (n: number) => n.toLocaleString('en-US');
+function hash32(n: number, seed = 2166136261) {
+  let h = (seed ^ n) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 3266489917) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+const noise = (s: number) => (hash32(s) / 4294967295 - 0.5) * 2;
+const lossAt = (s: number) => 1.84 + 5.2 * Math.exp(-s / 3200) + 0.022 * noise(s) + 0.008 * Math.sin(s / 53);
+const lrAt = (s: number) => 3e-4 * 0.5 * (1 + Math.cos((Math.PI * s) / TOTAL));
+const fmtLr = (v: number) => { const e = Math.floor(Math.log10(v)); return (v / Math.pow(10, e)).toFixed(2) + 'e' + e; };
+const hex8 = (n: number) => n.toString(16).padStart(8, '0');
+const rngAt = (s: number) => '0x' + hex8(hash32(s, 11)) + hex8(hash32(s, 29));
+const rngShort = (r: string) => r.slice(0, 10) + '…' + r.slice(-8);
+const stepMs = (s: number) => 828 + (hash32(s, 3) % 34);
+const ckptId = (step: number, attempt: number) => 'step-' + String(step).padStart(6, '0') + '-' + attempt;
+
+function appAt(step: number): AppState {
+  const offset = step * GLOBAL_BATCH;
+  const inEpoch = offset % EPOCH_SAMPLES;
+  return {
+    epoch: Math.floor(step / EPOCH_STEPS) + 1, epochTotal: Math.ceil(TOTAL / EPOCH_STEPS), step,
+    loss: lossAt(step), lr: lrAt(step), shard: Math.floor(inEpoch / SHARD), shardTotal: EPOCH_SAMPLES / SHARD,
+    offset, rng: rngAt(step),
+  };
+}
+function sysAt(step: number): SysState {
+  const k = Math.floor(step / CKPT_EVERY);
+  return {
+    pid: 48213, vram: 71.4 + (hash32(k, 5) % 9) / 10, ram: 18.1 + (hash32(k, 7) % 7) / 10,
+    fds: 338 + (hash32(k, 9) % 9), ranks: 'Rank 0–7 Synced', barrier: 34 + (hash32(k, 13) % 9),
+  };
+}
+const snap = (step: number, attempt: number, takenAt: number): Snapshot =>
+  ({ id: ckptId(step, attempt), step, attempt, takenAt, app: appAt(step), sys: sysAt(step) });
+const stepLine = (s: number) => 'step ' + fmt(s) + '  loss ' + lossAt(s).toFixed(4) + '  lr ' + fmtLr(lrAt(s)) + '  ' + stepMs(s) + ' ms/step';
+
+/* ---------- simulation engine (mutable, re-rendered by notify) ---------- */
+function createSim(notify: () => void) {
+  const timers: number[] = [];
+  let logId = 0;
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  const stamp = (ms: number) => { const d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + '.' + pad(d.getMilliseconds(), 3); };
+
+  const init = (): SimState => {
+    const now = Date.now();
+    const history: Point[] = [];
+    for (let st = 17400; st <= 18260; st += 4) history.push({ step: st, loss: lossAt(st), seg: 0, replay: false });
+    const mk = (ago: number, level: LogLine['level'], src: string, msg: string): LogLine => ({ id: ++logId, t: stamp(now - ago), level, src, msg });
+    return {
+      phase: 1, status: 'Running', attempt: 1, step: 18260, maxStep: 18260, busy: false,
+      disruptStep: null, ckpt: snap(18200, 1, now - 14000),
+      ckpts: [17600, 17800, 18000, 18200].map(s => ({ step: s, attempt: 1 })),
+      restored: null, recovery: null, replayUntil: null, seg: 0, history, total: TOTAL, live: false,
+      logs: [
+        mk(75000, 'INFO', 'sched', 'admitted ' + JOB + '  8 × H100 80GB  FSDP full-shard  bf16'),
+        mk(68000, 'INFO', 'hibernus', 'supervisor attached  pid 48213  remote ' + REMOTE + '  checkpoint every 200 steps'),
+        mk(44000, 'OK', 'ckpt', ckptId(18000, 1) + ' published  sha256 verified'),
+        mk(30000, 'STEP', 'train', stepLine(18100)),
+        mk(14000, 'OK', 'ckpt', ckptId(18200, 1) + ' published  sha256 verified'),
+        mk(14000, 'STEP', 'train', stepLine(18200)),
+      ],
+    };
+  };
+
+  const sim: any = { s: init() };
+  const log = (level: LogLine['level'], src: string, msg: string) => {
+    sim.s.logs.push({ id: ++logId, t: stamp(Date.now()), level, src, msg });
+    if (sim.s.logs.length > 400) sim.s.logs.splice(0, 100);
+  };
+  const later = (fn: () => void, ms: number) => {
+    timers.push(window.setTimeout(() => { fn(); notify(); }, ms));
+  };
+
+  const checkpoint = () => {
+    const s: SimState = sim.s, step = s.step, id = ckptId(step, s.attempt), h = hash32(step, 77);
+    const ser = 190 + (h % 80), dump = 3.1 + (h % 60) / 100, up = 11.5 + (h % 40) / 10, sys = sysAt(step);
+    log('INFO', 'ckpt', id + '  app state serialized  4.1 GB  ' + ser + ' ms');
+    log('INFO', 'criu', 'dump pid ' + sys.pid + '  8 ranks  host RAM ' + sys.ram.toFixed(1) + ' GB  ' + dump.toFixed(2) + ' s');
+    log('OK', 's3', 'published ' + REMOTE + '/' + JOB + '/' + id + '/  sha256 verified  ' + up.toFixed(1) + ' s');
+    s.ckpt = snap(step, s.attempt, Date.now());
+    s.ckpts.push({ step, attempt: s.attempt });
+  };
+
+  sim.tick = () => {
+    const s: SimState = sim.s;
+    if (s.phase !== 1 && s.phase !== 4) return;
+    s.step += 4;
+    if (s.step > s.maxStep) s.maxStep = s.step;
+    const replay = s.replayUntil !== null && s.step <= s.replayUntil;
+    s.history.push({ step: s.step, loss: lossAt(s.step), seg: s.seg, replay });
+    if (s.history.length > 1600) s.history.splice(0, 400);
+    if (s.step % 100 === 0) log('STEP', 'train', stepLine(s.step) + (replay ? '  (replay)' : ''));
+    if (s.step % CKPT_EVERY === 0 && s.step > s.ckpt.step) checkpoint();
+    if (s.replayUntil !== null && s.step > s.replayUntil) {
+      log('OK', 'train', 'replay complete  loss trace identical through step ' + fmt(s.replayUntil));
+      s.replayUntil = null;
+    }
+    notify();
+  };
+
+  const finish = () => {
+    const s: SimState = sim.s, ck = s.ckpt;
+    const app = appAt(ck.step), sys = { ...ck.sys, barrier: ck.sys.barrier - 12 };
+    const lost = (s.disruptStep as number) - ck.step;
+    s.step = ck.step; s.phase = 4; s.status = 'Recovered'; s.attempt += 1; s.seg += 1;
+    s.replayUntil = s.disruptStep;
+    s.restored = { snapshot: ck, app, sys };
+    s.recovery = { stepsLost: lost, restoreMs: 17456 };
+    s.history.push({ step: s.step, loss: lossAt(s.step), seg: s.seg, replay: true });
+    log('OK', 'supervisor', 'resumed global_step=' + fmt(s.step) + '  loss ' + app.loss.toFixed(4) + '  restore 17.46 s  ' + lost + ' steps to replay');
+    s.busy = false;
+  };
+
+  const restore = () => {
+    const s: SimState = sim.s, ck = s.ckpt, a = appAt(ck.step), barrier = ck.sys.barrier - 12;
+    s.phase = 3; s.status = 'Checkpointing';
+    log('INFO', 'supervisor', 'tearing down process group  8 ranks  SIGKILL');
+    later(() => log('INFO', 's3', 'fetch ' + REMOTE + '/' + JOB + '/' + ck.id + '/  manifest verified  0.31 s'), 450);
+    later(() => log('INFO', 's3', 'download 61.2 GB  9.84 s  (6.2 GB/s)'), 900);
+    later(() => log('INFO', 'criu', 'restore pid ' + ck.sys.pid + '  8 ranks  cuda-checkpoint resume  6.82 s'), 1500);
+    later(() => log('INFO', 'app', 'restore RNG ' + rngShort(a.rng) + '  shard ' + a.shard + '/' + a.shardTotal + '  offset ' + fmt(a.offset) + '  0.46 s'), 2000);
+    later(() => log('OK', 'nccl', 'rank 0–7 rendezvous complete  barrier ' + barrier + ' ms'), 2500);
+    later(finish, 3000);
+  };
+
+  sim.disrupt = () => {
+    const s: SimState = sim.s;
+    if (s.busy || (s.phase !== 1 && s.phase !== 4)) return;
+    s.busy = true; s.disruptStep = s.step; s.phase = 2; s.status = 'Disrupted';
+    s.restored = null; s.recovery = null; s.replayUntil = null;
+    log('WARN', 'kernel', 'NVRM: Xid 79, GPU has fallen off the bus  (rank 3, GPU 3)');
+    log('ERROR', 'nccl', 'rank 3 unreachable: all_reduce timed out after 30.0 s');
+    log('ERROR', 'train', 'process group aborted at global_step=' + fmt(s.step) + '  loss ' + lossAt(s.step).toFixed(4));
+    log('WARN', 'supervisor', 'latest restore point ' + s.ckpt.id + '  ' + (s.step - s.ckpt.step) + ' steps behind');
+    later(restore, 2200);
+    notify();
+  };
+  sim.reset = () => { timers.forEach(t => clearTimeout(t)); timers.length = 0; sim.s = init(); notify(); };
+  sim.dispose = () => { timers.forEach(t => clearTimeout(t)); timers.length = 0; };
+  return sim;
+}
+
+/* ---------- live run: one document written by the GPU host's bridge ---------- */
+function fromLive(d: any): SimState {
+  const hist: Point[] = (d.series || []).map((p: any) => ({ step: p[0], loss: p[1], seg: p[2], replay: p[2] === 1 }));
+  const k = d.ckpt ? d.ckpt.step : null;
+  const snapLike: any = d.ckpt ? { id: d.ckpt.id, step: d.ckpt.step, attempt: 1, takenAt: d.updatedAt } : { id: '-', step: 0, attempt: 1, takenAt: d.updatedAt };
+  const restored = d.restoredStep != null ? { snapshot: snapLike, app: null, sys: null } : null;
+  return {
+    phase: d.phase, status: d.status, attempt: d.restoredStep != null ? 2 : 1, step: d.step, maxStep: d.step,
+    busy: d.phase === 2 || d.phase === 3, disruptStep: d.disruptStep == null ? null : d.disruptStep,
+    ckpt: snapLike, ckpts: k == null ? [] : [{ step: k, attempt: 1 }], restored: restored as any,
+    recovery: d.restoredStep != null ? { stepsLost: 0, restoreMs: d.restoreMs } : null,
+    replayUntil: null, seg: hist.length ? hist[hist.length - 1].seg : 0, history: hist,
+    logs: (d.logs || []).map((l: any, i: number) => ({ id: i, t: l[0], level: l[1], src: l[2], msg: l[3] })),
+    total: d.total || TOTAL, live: true,
+  } as SimState;
+}
+
+/* ---------- comparison rows ---------- */
+const match = (eq: boolean): Delta => eq ? { text: 'Exact Match', tone: 'ok' } : { text: 'Mismatch', tone: 'warn' };
+const signed = (n: number, unit: string): string => (n >= 0 ? '+' : '−') + fmt(Math.abs(n)) + unit;
+
+function appRows(b: AppState, a: AppState | null): Row[] {
+  const r = (label: string, before: string, after: string | null, delta: Delta | null, wrap = false): Row => ({ label, before, after, delta, wrap });
+  return [
+    r('Epoch', b.epoch + ' / ' + b.epochTotal, a && a.epoch + ' / ' + a.epochTotal, a && match(a.epoch === b.epoch)),
+    r('Global step', fmt(b.step), a && fmt(a.step), a && { text: signed(a.step - b.step, ' steps'), tone: a.step === b.step ? 'ok' : 'warn' }),
+    r('Loss value', b.loss.toFixed(4), a && a.loss.toFixed(4), a && match(a.loss === b.loss)),
+    r('Learning rate', fmtLr(b.lr), a && fmtLr(a.lr), a && match(a.lr === b.lr)),
+    r('Dataloader shard index', b.shard + ' / ' + b.shardTotal, a && a.shard + ' / ' + a.shardTotal, a && match(a.shard === b.shard)),
+    r('Sample offset', fmt(b.offset), a && fmt(a.offset), a && { text: signed(a.offset - b.offset, ' samples'), tone: a.offset === b.offset ? 'ok' : 'warn' }),
+    r('RNG seed hash', rngShort(b.rng), a && rngShort(a.rng), a && match(a.rng === b.rng), true),
+  ];
+}
+function sysRows(b: SysState, a: SysState | null): Row[] {
+  const r = (label: string, before: string, after: string | null, delta: Delta | null, extra: Partial<Row> = {}): Row => ({ label, before, after, delta, ...extra });
+  const dBar = a ? a.barrier - b.barrier : 0;
+  return [
+    r('Process PID', String(b.pid), a && String(a.pid), a && match(a.pid === b.pid)),
+    r('GPU VRAM allocated', b.vram.toFixed(1) + ' GB', a && a.vram.toFixed(1) + ' GB', a && match(a.vram === b.vram)),
+    r('Host RAM snapshot size', b.ram.toFixed(1) + ' GB', a && a.ram.toFixed(1) + ' GB', a && match(a.ram === b.ram)),
+    r('Open file descriptors', fmt(b.fds), a && fmt(a.fds), a && match(a.fds === b.fds)),
+    r('Rank synchronization', b.ranks, a && a.ranks, a && (a.ranks !== b.ranks ? { text: 'Mismatch', tone: 'warn' } : { text: (dBar <= 0 ? '−' : '+') + Math.abs(dBar) + 'ms', tone: 'ok' }),
+      { beforeSub: 'all-reduce barrier ' + b.barrier + ' ms', afterSub: a ? 'all-reduce barrier ' + a.barrier + ' ms' : undefined }),
+  ];
+}
+
+/* ---------- small UI pieces ---------- */
+const STATUS_STYLE: Record<Status, { cls: string; dot: string; pulse: boolean }> = {
+  Running: { cls: 'bg-blue-500/10 text-blue-400 ring-blue-500/25', dot: 'bg-blue-500', pulse: true },
+  Disrupted: { cls: 'bg-amber-500/10 text-amber-400 ring-amber-500/25', dot: 'bg-amber-500', pulse: false },
+  Checkpointing: { cls: 'bg-blue-500/10 text-blue-400 ring-blue-500/25', dot: 'bg-blue-500', pulse: true },
+  Recovered: { cls: 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/25', dot: 'bg-emerald-500', pulse: false },
+};
+function StatusBadge({ status }: { status: Status }) {
+  const st = STATUS_STYLE[status];
+  return (
+    <span role="status" className={'inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ' + st.cls}>
+      <span className={'h-1.5 w-1.5 rounded-full ' + st.dot + (st.pulse ? ' animate-pulse' : '')} />
+      {status}
+    </span>
+  );
+}
+
+const TONE: Record<Tone, string> = {
+  ok: 'bg-emerald-500/10 text-emerald-400 ring-emerald-500/20',
+  warn: 'bg-amber-500/10 text-amber-400 ring-amber-500/25',
+  info: 'bg-blue-500/10 text-blue-400 ring-blue-500/25',
+  mute: 'bg-zinc-800/60 text-zinc-500 ring-zinc-700/60',
+};
+function Chip({ delta, className = '' }: { delta: Delta; className?: string }) {
+  return (
+    <span className={'inline-flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 font-mono text-[11px] tabular-nums ring-1 ring-inset ' + TONE[delta.tone] + ' ' + className}>
+      {delta.tone === 'ok' && <Icon name="Check" size={11} />}
+      {delta.tone === 'warn' && <Icon name="TriangleAlert" size={11} />}
+      {delta.text}
+    </span>
+  );
+}
+
+const COLS = 'md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.75fr)]';
+
+function Cell({ tag, children, sub, wrap, after, mode }: { tag: string; children: any; sub?: string; wrap?: boolean; after?: boolean; mode?: string }) {
+  let body: any = children;
+  if (after && children === null) {
+    body = mode === 'restoring'
+      ? <span className="block h-4 w-24 animate-pulse rounded bg-zinc-800" />
+      : <span className="text-zinc-600">—</span>;
+  }
+  return (
+    <div className={'min-w-0 ' + (after ? 'md:border-l md:border-zinc-800 md:pl-4' : '')}>
+      <span className="mb-0.5 block text-[10px] uppercase tracking-wider text-zinc-500 md:hidden">{tag}</span>
+      <div className={'font-mono text-[13px] tabular-nums text-zinc-100 ' + (wrap ? 'break-all' : '')}>{body}</div>
+      {sub && children !== null && <div className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-500">{sub}</div>}
+    </div>
+  );
+}
+
+function ComparePanel(props: { title: string; subtitle: string; icon: string; rows: Row[]; mode: string; beforeId: string; afterId: string | null }) {
+  const { title, subtitle, icon, rows, mode, beforeId, afterId } = props;
+  const afterDot = mode === 'done' ? 'bg-emerald-500' : mode === 'restoring' ? 'bg-blue-500 animate-pulse' : 'bg-zinc-600';
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900">
+      <header className="flex items-center gap-3 border-b border-zinc-800 px-4 py-3">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-zinc-800 text-zinc-300"><Icon name={icon} size={15} /></span>
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium text-zinc-100">{title}</h2>
+          <p className="text-xs text-zinc-500">{subtitle}</p>
+        </div>
+      </header>
+      <div className={'hidden gap-x-4 border-b border-zinc-800 px-4 py-2.5 text-[11px] uppercase tracking-wider text-zinc-500 md:grid ' + COLS}>
+        <div />
+        <div>
+          <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />Before disruption</span>
+          <span className="block truncate font-mono normal-case tracking-normal text-zinc-600">last valid snapshot · {beforeId}</span>
+        </div>
+        <div className="md:border-l md:border-zinc-800 md:pl-4">
+          <span className="inline-flex items-center gap-1.5"><span className={'h-1.5 w-1.5 rounded-full ' + afterDot} />After disruption</span>
+          <span className="block truncate font-mono normal-case tracking-normal text-zinc-600">{afterId ? 'restored state · ' + afterId : mode === 'restoring' ? 'restoring…' : 'awaiting restore'}</span>
+        </div>
+        <div className="text-right">Delta</div>
+      </div>
+      {rows.map((row, i) => (
+        <div key={row.label} className={'grid grid-cols-2 gap-x-4 gap-y-1.5 px-4 py-3 md:items-center ' + COLS + (i > 0 ? ' border-t border-zinc-800/70' : '')}>
+          <div className="col-span-2 text-[13px] text-zinc-400 md:col-span-1">{row.label}</div>
+          <Cell tag="Before" sub={row.beforeSub} wrap={row.wrap}>{row.before}</Cell>
+          <div className="min-w-0">
+            <Cell tag="After" sub={row.afterSub} wrap={row.wrap} after mode={mode}>{row.after}</Cell>
+            {row.delta && <div className="mt-1.5 md:hidden"><Chip delta={row.delta} /></div>}
+          </div>
+          <div className="hidden justify-end md:flex">
+            {row.delta ? <Chip delta={row.delta} /> : <Chip delta={{ text: mode === 'restoring' ? 'verifying' : 'pending', tone: 'mute' }} />}
+          </div>
+        </div>
+      ))}
+      {rows.length === 0 && <div className="px-4 py-6 text-sm text-zinc-500">Waiting for the first checkpoint from the GPU host…</div>}
+    </section>
+  );
+}
+
+/* ---------- lifecycle stepper ---------- */
+const STEPS = ['Pre-Training', 'Active Training', 'Disruption Event', 'Checkpoint Restore', 'Post-Recovery Training'];
+function Stepper({ s }: { s: SimState }) {
+  const caption = (i: number): string => {
+    const ds = s.disruptStep;
+    if (i === 0) return 'data ready · warmup done';
+    if (i === 1) return s.phase === 1 ? 'step ' + fmt(s.step) : 'ended at ' + fmt(ds as number);
+    if (i === 2) return s.phase < 2 ? (s.live ? 'training' : 'awaiting trigger') : (s.live ? 'notice · step ' : 'Xid 79 · step ') + fmt(ds as number);
+    if (i === 3) return s.phase < 3 ? '—' : s.phase === 3 ? 'restoring ' + s.ckpt.id : (s.restored ? s.restored.snapshot.id : s.ckpt.id);
+    return s.phase < 4 ? '—' : 'step ' + fmt(s.step);
+  };
+  return (
+    <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-5">
+      <ol className="flex min-w-[680px] items-start">
+        {STEPS.map((label, i) => {
+          const done = i < s.phase, current = i === s.phase;
+          const amber = current && i === 2;
+          const ring = done ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-400'
+            : amber ? 'border-amber-500/70 bg-amber-500/10 text-amber-400'
+            : current ? 'border-blue-500/70 bg-blue-500/10 text-blue-400'
+            : 'border-zinc-700 bg-zinc-900 text-zinc-600';
+          const iconName = done ? 'Check' : amber ? 'TriangleAlert' : (current && i === 3) ? 'LoaderCircle' : current ? 'Activity' : '';
+          return (
+            <li key={label} className="min-w-0 flex-1" aria-current={current ? 'step' : undefined}>
+              <div className="flex items-center">
+                <span className={'grid h-7 w-7 shrink-0 place-items-center rounded-full border font-mono text-xs ' + ring}>
+                  {iconName ? <Icon name={iconName} size={14} className={iconName === 'LoaderCircle' ? 'animate-spin' : ''} /> : i + 1}
+                </span>
+                {i < STEPS.length - 1 && <span className={'mx-2 h-px flex-1 ' + (i < s.phase ? 'bg-emerald-500/40' : 'bg-zinc-800')} />}
+              </div>
+              <div className="mt-2.5 pr-3">
+                <div className={'text-[13px] font-medium ' + (current ? 'text-zinc-100' : done ? 'text-zinc-300' : 'text-zinc-500')}>{label}</div>
+                <div className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-zinc-500">{caption(i)}</div>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/* ---------- loss timeline ---------- */
+function useWidth() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(640);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const set = () => setW(Math.max(280, el.clientWidth));
+    const ro = new ResizeObserver(set);
+    ro.observe(el); set();
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w] as const;
+}
+
+function LossChart({ s, live, base }: { s: SimState; live: boolean; base: any[] | null }) {
+  const [ref, w] = useWidth();
+  const H = 236, m = { l: 48, r: 14, t: 34, b: 30 };
+  const iw = w - m.l - m.r, ih = H - m.t - m.b;
+  const xMax = live ? s.total : s.maxStep + 100, xMin = live ? 0 : xMax - 1200;
+  const X = (st: number) => m.l + ((st - xMin) / (xMax - xMin)) * iw;
+  const vals = s.history.map(p => p.loss).filter(v => v > 0);
+  const lo = live ? Math.floor(Math.log10(Math.max(1e-6, Math.min(1, ...vals)))) : 0;
+  const hi = live ? Math.ceil(Math.log10(Math.max(1.2, ...vals))) : 0;
+  const Y0 = 1.80, Y1 = 1.93;
+  const Y = (v: number) => live
+    ? m.t + (1 - (Math.log10(Math.max(v, 1e-6)) - lo) / Math.max(1, hi - lo)) * ih
+    : m.t + (1 - (Math.min(Y1, Math.max(Y0, v)) - Y0) / (Y1 - Y0)) * ih;
+
+  const groups: { key: string; replay: boolean; pts: Point[] }[] = [];
+  for (const p of s.history) {
+    if (p.step < xMin - 8) continue;
+    const last = groups[groups.length - 1];
+    const key = p.seg + '-' + p.replay;
+    if (!last || last.key !== key) {
+      const g = { key, replay: p.replay, pts: [] as Point[] };
+      if (last && last.pts.length && last.pts[0].seg === p.seg) g.pts.push(last.pts[last.pts.length - 1]);
+      groups.push(g);
+    }
+    groups[groups.length - 1].pts.push(p);
+  }
+  const path = (pts: Point[]) => pts.map((p, i) => (i ? 'L' : 'M') + X(p.step).toFixed(1) + ' ' + Y(p.loss).toFixed(1)).join(' ');
+  const ordered = groups.filter(g => !g.replay).concat(groups.filter(g => g.replay));
+
+  const xTicks: number[] = [];
+  const xStep = live ? Math.max(200, Math.round(s.total / 6 / 100) * 100) : 200;
+  for (let t = Math.ceil(xMin / xStep) * xStep; t <= xMax; t += xStep) xTicks.push(t);
+  const yTicks: number[] = live ? Array.from({ length: hi - lo + 1 }, (_, i) => Math.pow(10, lo + i)) : [1.80, 1.84, 1.88, 1.92];
+  const yLabel = (v: number) => live ? '1e' + Math.round(Math.log10(v)) : v.toFixed(2);
+  const ds = s.disruptStep, rs = s.recovery ? (s.restored as any).snapshot.step : null;
+  const inWin = (v: number | null) => v !== null && v >= xMin && v <= xMax;
+  const last = s.history[s.history.length - 1];
+  const flip = ds !== null && X(ds) > w - 150;
+
+  return (
+    <div ref={ref} className="w-full">
+      <svg width={w} height={H} role="img" aria-label="Training loss around the disruption point" className="block">
+        {yTicks.map(v => (
+          <g key={v}>
+            <line x1={m.l} x2={w - m.r} y1={Y(v)} y2={Y(v)} stroke={C.grid} strokeWidth="1" />
+            <text x={m.l - 8} y={Y(v) + 4} textAnchor="end" fontSize="10" fill={C.axis} fontFamily="JetBrains Mono, monospace">{yLabel(v)}</text>
+          </g>
+        ))}
+        {xTicks.map(t => (
+          <text key={t} x={X(t)} y={H - 9} textAnchor="middle" fontSize="10" fill={C.axis} fontFamily="JetBrains Mono, monospace">{t >= 1000 ? (t / 1000).toFixed(1) + 'k' : t}</text>
+        ))}
+        {inWin(ds) && inWin(rs) && (
+          <rect x={X(rs)} y={m.t} width={Math.max(1, X(ds as number) - X(rs))} height={ih} fill={C.amber} opacity="0.12" />
+        )}
+        {s.ckpts.filter(c => c.step >= xMin && c.step <= xMax).map(c => (
+          <g key={c.step + '-' + c.attempt}>
+            <line x1={X(c.step)} x2={X(c.step)} y1={m.t + ih - 7} y2={m.t + ih} stroke={C.emerald} strokeWidth="1.5" />
+            <circle cx={X(c.step)} cy={m.t + ih - 9} r="2" fill={C.emerald} />
+          </g>
+        ))}
+        {base && base.length > 1 && (
+          <path d={base.map((p: any, i: number) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1)).join(' ')}
+            fill="none" stroke="#71717A" strokeWidth="1" strokeDasharray="3 3" opacity="0.8" />
+        )}
+        {ordered.map(g => g.pts.length > 1 && (
+          <path key={g.key} d={path(g.pts)} fill="none" stroke={g.replay ? C.emerald : C.blue} strokeWidth={g.replay ? 1.8 : 1.5} strokeLinejoin="round" />
+        ))}
+        {inWin(rs) && (
+          <g>
+            <line x1={X(rs)} x2={X(rs)} y1={m.t - 6} y2={m.t + ih} stroke={C.emerald} strokeWidth="1.5" />
+            <text x={X(rs) - 6} y={m.t - 12} textAnchor="end" fontSize="11" fill={C.emerald} fontFamily="JetBrains Mono, monospace">Restored · {fmt(rs)}</text>
+          </g>
+        )}
+        {inWin(ds) && (
+          <g>
+            <line x1={X(ds as number)} x2={X(ds as number)} y1={m.t - 6} y2={m.t + ih} stroke={C.amber} strokeWidth="1.5" strokeDasharray="4 3" />
+            <text x={X(ds as number) + (flip ? -6 : 6)} y={m.t - 12} textAnchor={flip ? 'end' : 'start'} fontSize="11" fill={C.amber} fontFamily="JetBrains Mono, monospace">Disruption · {fmt(ds as number)}</text>
+          </g>
+        )}
+        {last && s.phase !== 2 && s.phase !== 3 && (
+          <g>
+            <circle cx={X(last.step)} cy={Y(last.loss)} r="7" fill={last.replay ? C.emerald : C.blue} opacity="0.22" />
+            <circle cx={X(last.step)} cy={Y(last.loss)} r="3.5" fill={last.replay ? C.emerald : C.blue} />
+          </g>
+        )}
+        {last && (s.phase === 2 || s.phase === 3) && <circle cx={X(last.step)} cy={Y(last.loss)} r="3.5" fill={C.amber} />}
+      </svg>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2.5">
+      <div className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className="mt-1 truncate font-mono text-[15px] font-medium tabular-nums text-zinc-100">{value}</div>
+      {sub && <div className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-zinc-500">{sub}</div>}
+    </div>
+  );
+}
+
+function Telemetry({ s, live }: { s: SimState; live: any }) {
+  const pct = (s.step / s.total) * 100;
+  const dsPct = s.disruptStep !== null ? (s.disruptStep / s.total) * 100 : null;
+  const lastLoss = s.history.length ? s.history[s.history.length - 1].loss : 0;
+  const liveLr = Math.max(1e-12, 1e-2 * 0.5 * (1 + Math.cos((Math.PI * s.step) / s.total)));
+  const kTick = (n: number) => (n >= 1000 ? String(parseFloat((n / 1000).toFixed(2))) + 'k' : String(n));
+  const label = dsPct !== null ? Math.min(Math.max(dsPct, 14), 86) : 0;
+  const barColor = s.phase === 2 || s.phase === 3 ? 'bg-amber-500' : s.replayUntil !== null ? 'bg-emerald-500' : 'bg-blue-500';
+  const a = appAt(s.step);
+  return (
+    <section className="rounded-xl border border-zinc-800 bg-zinc-900">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className="grid h-7 w-7 place-items-center rounded-md bg-zinc-800 text-zinc-300"><Icon name="Activity" size={15} /></span>
+          <div>
+            <h2 className="text-sm font-medium text-zinc-100">Live telemetry</h2>
+            <p className="text-xs text-zinc-500">Step-loss trace with checkpoints and the disruption point</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500">
+          <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-blue-500" />loss</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-emerald-500" />{live ? 'restored run' : 'replayed after restore'}</span>
+          {live && <span className="inline-flex items-center gap-1.5"><span className="h-0 w-4 border-t border-dashed border-zinc-500" />uninterrupted reference</span>}
+          <span className="inline-flex items-center gap-1.5"><span className="h-3 w-0.5 rounded bg-emerald-500" />checkpoint</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-3 w-0.5 rounded bg-amber-500" />disruption</span>
+        </div>
+      </header>
+      <div className="grid grid-cols-2 gap-3 px-4 pt-4 md:grid-cols-4">
+        <Stat label="Global step" value={fmt(s.step)} sub={'of ' + fmt(s.total) + ' · ' + pct.toFixed(1) + '%'} />
+        {live ? (
+          <>
+            <Stat label="Loss" value={lastLoss.toFixed(6)} sub={s.restored ? 'restored run' : 'training'} />
+            <Stat label="Learning rate" value={fmtLr(liveLr)} sub="cosine decay" />
+            <Stat label="Checkpoint" value={live.ckpt ? Math.round(live.ckpt.bytes / 1024) + ' KiB' : 'none yet'} sub={live.ckpt ? live.ckpt.ms + ' ms · saved to S3' : 'waiting for notice'} />
+          </>
+        ) : (
+          <>
+            <Stat label="Loss" value={a.loss.toFixed(4)} sub={s.replayUntil !== null ? 'replaying · identical trace' : 'training'} />
+            <Stat label="Learning rate" value={fmtLr(a.lr)} sub="cosine decay" />
+            <Stat label="Step time" value={stepMs(s.step) + ' ms'} sub="8 ranks · bf16" />
+          </>
+        )}
+      </div>
+      <div className="px-4 pt-5">
+        <div className="relative pt-5">
+          {dsPct !== null && (
+            <div className="absolute top-0 -translate-x-1/2 whitespace-nowrap font-mono text-[11px] tabular-nums text-amber-400" style={{ left: label + '%' }}>
+              Disruption · {fmt(s.disruptStep as number)}
+            </div>
+          )}
+          <div className="relative h-2 rounded-full bg-zinc-800">
+            <div className={'absolute inset-y-0 left-0 rounded-full ' + barColor} style={{ width: pct + '%' }} />
+            {dsPct !== null && <div className="absolute -bottom-1.5 -top-1.5 w-0.5 rounded bg-amber-500" style={{ left: dsPct + '%' }} />}
+          </div>
+          <div className="mt-1.5 flex justify-between font-mono text-[10px] tabular-nums text-zinc-600">
+            {[0, 0.25, 0.5, 0.75, 1].map(f => <span key={f}>{kTick(Math.round(f * s.total))}</span>)}
+          </div>
+        </div>
+      </div>
+      <div className="px-2 pb-3 pt-2"><LossChart s={s} live={!!live} base={live ? live.baseline : null} /></div>
+    </section>
+  );
+}
+
+/* ---------- log drawer ---------- */
+const LEVEL_CLS: Record<string, string> = { INFO: 'text-zinc-500', STEP: 'text-blue-400', OK: 'text-emerald-400', WARN: 'text-amber-400', ERROR: 'text-amber-300 font-semibold' };
+function LogDrawer({ logs }: { logs: LogLine[] }) {
+  const [open, setOpen] = useState(true);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [logs.length, open]);
+  const onScroll = () => {
+    const el = boxRef.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  };
+  return (
+    <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue-500">
+        <span className="flex items-center gap-3">
+          <span className="grid h-7 w-7 place-items-center rounded-md bg-zinc-800 text-zinc-300"><Icon name="Terminal" size={15} /></span>
+          <span>
+            <span className="block text-sm font-medium text-zinc-100">Event log</span>
+            <span className="block text-xs text-zinc-500">Checkpoint serialization and restore timings</span>
+          </span>
+        </span>
+        <span className="flex items-center gap-3 text-xs text-zinc-500">
+          <span className="font-mono tabular-nums">{logs.length} lines</span>
+          <span className={'transition-transform ' + (open ? '' : '-rotate-90')}><Icon name="ChevronDown" size={16} /></span>
+        </span>
+      </button>
+      {open && (
+        <div ref={boxRef} onScroll={onScroll} className="log-scroll max-h-80 overflow-auto border-t border-zinc-800 bg-zinc-950 px-4 py-3 font-mono text-[12px] leading-5 tabular-nums">
+          {logs.map(l => (
+            <div key={l.id} className="flex min-w-max gap-3 whitespace-pre">
+              <span className="text-zinc-600">{l.t}</span>
+              <span className={'w-11 ' + (LEVEL_CLS[l.level] || '')}>{l.level}</span>
+              <span className="w-[72px] text-zinc-500">{l.src}</span>
+              <span className={l.level === 'WARN' || l.level === 'ERROR' ? 'text-amber-300' : l.level === 'OK' ? 'text-zinc-200' : 'text-zinc-300'}>{l.msg}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------- app ---------- */
+function App() {
+  const simRef = useRef<any>(null);
+  const [, bump] = useReducer((x: number) => x + 1, 0);
+  if (!simRef.current) simRef.current = createSim(() => bump());
+  const sim = simRef.current;
+  const [liveDoc, setLiveDoc] = useState<any>(null);
+  const [view, setView] = useState<string>('auto');
+  const useLive = !!liveDoc && view !== 'sim';
+  const s: SimState = useLive ? fromLive(liveDoc) : sim.s;
+  useEffect(() => {
+    const id = window.setInterval(() => sim.tick(), 250);
+    return () => { clearInterval(id); sim.dispose(); };
+  }, []);
+  useEffect(() => {
+    let off: any = null, dead = false, timer: any = null;
+    // Outside Claude (served next to live.json by scripts/gpu-demo/run.sh), poll the file every 2 seconds.
+    const poll = () => {
+      fetch('live.json', { cache: 'no-store' })
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => { if (!dead && d && d.v) setLiveDoc(d); })
+        .catch(() => {})
+        .then(() => { if (!dead) timer = window.setTimeout(poll, 2000); });
+    };
+    const cl = (window as any).claude;
+    if (cl && cl.use) {
+      cl.use('db').then((db: any) => {
+        if (!db || dead) return;
+        off = db.doc('live/run').onSnapshot((snap: any) => setLiveDoc(snap.exists ? snap.data() : null), () => {});
+      }).catch(() => {});
+    } else {
+      poll();
+    }
+    return () => { dead = true; if (off) off(); if (timer) clearTimeout(timer); };
+  }, []);
+
+  const jobName: string = useLive ? liveDoc.workload : JOB;
+  const mode: string = useLive ? liveDoc.mode : s.restored ? 'done' : s.phase === 3 ? 'restoring' : 'idle';
+  const before: any = s.restored ? s.restored.snapshot : s.ckpt;
+  const appR: Row[] = useLive ? liveDoc.appRows : appRows(before.app, s.restored ? s.restored.app : null);
+  const sysR: Row[] = useLive ? liveDoc.sysRows : sysRows(before.sys, s.restored ? s.restored.sys : null);
+  const mismatches = appR.concat(sysR).filter(r => r.delta && r.delta.tone === 'warn').length;
+  const canSim = !s.busy && (s.phase === 1 || s.phase === 4);
+  const ago = Math.max(0, Math.round((Date.now() - before.takenAt) / 1000));
+  const age = useLive ? Math.max(0, Math.round((Date.now() - liveDoc.updatedAt) / 1000)) : 0;
+  const host: any = useLive ? liveDoc.host || {} : {};
+  const verdict: any = useLive ? liveDoc.verdict : null;
+
+  return (
+    <div className="gutter">
+      <div className="mx-auto flex max-w-6xl flex-col gap-5">
+        <header className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 text-[13px] text-zinc-500">
+            <span className="grid h-6 w-6 place-items-center rounded-md border border-zinc-800 bg-zinc-900 text-zinc-300"><Icon name="ShieldCheck" size={14} /></span>
+            <span>Training</span><span className="text-zinc-700">/</span><span>Runs</span><span className="text-zinc-700">/</span>
+            <span className="truncate font-mono text-zinc-300">{jobName}</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+              <h1 className="break-all font-mono text-xl font-semibold tracking-tight text-zinc-50 sm:text-2xl">{jobName}</h1>
+              <StatusBadge status={s.status} />
+            </div>
+            <div className="flex items-center gap-2">
+              {liveDoc && (
+                <button type="button" onClick={() => setView(useLive ? 'sim' : 'auto')}
+                  className="inline-flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-[13px] text-zinc-300 hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500">
+                  <Icon name={useLive ? 'Server' : 'Activity'} size={14} />{useLive ? 'Show simulation' : 'Show GPU run'}
+                </button>
+              )}
+              {!useLive && (
+                <button type="button" onClick={() => sim.reset()}
+                  className="inline-flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-[13px] text-zinc-300 hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500">
+                  <Icon name="RotateCcw" size={14} />Reset
+                </button>
+              )}
+              {!useLive && (
+                <button type="button" onClick={() => sim.disrupt()} disabled={!canSim}
+                  className="inline-flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-[13px] font-medium text-amber-300 hover:bg-amber-500/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Icon name={canSim ? 'Zap' : 'LoaderCircle'} size={14} className={canSim ? '' : 'animate-spin'} />
+                  {canSim ? 'Simulate Disruption' : 'Recovering…'}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
+            {(useLive
+              ? [host.gpu || 'GPU', 'driver ' + (host.driver || '?'), (host.instance || '') + ' · ' + (host.region || ''), 'attempt ' + s.attempt]
+              : ['8 × H100 80GB', 'FSDP full-shard · bf16', 'checkpoint every 200 steps', 'attempt ' + s.attempt]
+            ).map(t => (
+              <span key={t} className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1 font-mono tabular-nums">{t}</span>
+            ))}
+            {useLive ? (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-400">
+                <span className={'h-1.5 w-1.5 rounded-full bg-emerald-500 ' + (liveDoc.finished ? '' : 'animate-pulse')} />
+                {liveDoc.finished ? 'real GPU run · finished' : 'live from EC2'} · updated {age}s ago
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-2 py-1 text-zinc-500">
+                <Icon name="Server" size={12} />simulated telemetry
+              </span>
+            )}
+          </div>
+        </header>
+
+        <Stepper s={s} />
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+          <h2 className="text-base font-medium text-zinc-100">Before vs. after</h2>
+          {useLive && s.recovery ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip delta={{ text: 'resumed at step ' + fmt(before.step + 1), tone: 'info' }} />
+              <Chip delta={{ text: 'saved in ' + (liveDoc.ckpt ? liveDoc.ckpt.ms : '?') + ' ms', tone: 'ok' }} />
+              <Chip delta={{ text: 'restored in ' + ((s.recovery.restoreMs || 0) / 1000).toFixed(2) + ' s', tone: 'ok' }} />
+              {verdict && <Chip delta={{ text: verdict.compared + ' / ' + verdict.of + ' losses identical' + (verdict.final ? '' : ' so far'), tone: verdict.mismatches === 0 ? 'ok' : 'warn' }} />}
+              <Chip delta={{ text: mismatches === 0 ? '0 mismatches' : mismatches + ' mismatches', tone: mismatches === 0 ? 'ok' : 'warn' }} />
+            </div>
+          ) : useLive ? (
+            <p className="text-xs text-zinc-500">{liveDoc.ckpt ? 'Checkpoint ' + liveDoc.ckpt.id + ' is saved. Waiting for the restore.' : 'Streaming from the GPU host. A checkpoint appears here once Hibernus publishes one to S3.'}</p>
+          ) : s.recovery ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip delta={{ text: 'restored at step ' + fmt(before.step), tone: 'info' }} />
+              <Chip delta={{ text: s.recovery.stepsLost + ' steps replayed', tone: 'warn' }} />
+              <Chip delta={{ text: 'restore ' + (s.recovery.restoreMs / 1000).toFixed(2) + ' s', tone: 'ok' }} />
+              <Chip delta={{ text: mismatches === 0 ? '0 mismatches' : mismatches + ' mismatches', tone: mismatches === 0 ? 'ok' : 'warn' }} />
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-500">Last valid snapshot taken {ago} s ago. Simulate a disruption to compare it with the restored state.</p>
+          )}
+        </div>
+
+        <ComparePanel title="Application checkpoint state" subtitle="What the training loop needs to continue the same run" icon="Database"
+          rows={appR} mode={mode} beforeId={before.id} afterId={mode === 'done' ? before.id : null} />
+        <ComparePanel title="System & process state" subtitle={useLive ? 'The process is restarted by an application checkpoint, so it is expected to differ' : 'CRIU process snapshot and CUDA device state'} icon="Cpu"
+          rows={sysR} mode={mode} beforeId={before.id} afterId={mode === 'done' ? before.id : null} />
+
+        <Telemetry s={s} live={useLive ? liveDoc : null} />
+        <LogDrawer logs={s.logs} />
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
+</script>
+
+<script>
+  (function () {
+    var root = document.getElementById('root');
+    try {
+      var src = document.getElementById('app-src').textContent;
+      var out = Babel.transform(src, {
+        filename: 'app.tsx',
+        presets: [['typescript', { isTSX: true, allExtensions: true }], 'react']
+      }).code;
+      var s = document.createElement('script');
+      s.textContent = out;
+      document.body.appendChild(s);
+    } catch (e) {
+      root.innerHTML = '<pre style="color:#F59E0B;padding:16px;white-space:pre-wrap">Could not start the dashboard: ' +
+        String(e && e.message || e).replace(/</g, '&lt;') + '</pre>';
+    }
+  })();
+</script>
+
+</body>
+</html>
