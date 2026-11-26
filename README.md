@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/hibernus-logo-dark.svg">
+    <img src="docs/assets/logo/hibernus-logo-light.svg" alt="Hibernus" width="420">
+  </picture>
+</p>
+
 # Hibernus
 
 Hibernus lets a training workload resume after a disruption. A Supervisor runs the training process. When a disruption handler runs `hib checkpoint`, the training hook finishes the current update and pauses before reading the next batch. The Supervisor prints the path to the resulting restore point. A launcher can then run `hib restore` to continue from the next update.
