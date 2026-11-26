@@ -174,6 +174,9 @@ func (se *session) run(process *os.Process, exited <-chan int, output io.Reader)
 		fmt.Fprintln(os.Stderr, "hib: the workload is checkpointed; continue it with hib restore")
 		return exitOK
 	}
+	if code > 128 {
+		fmt.Fprintf(os.Stderr, "hib: the training process ended on %v\n", syscall.Signal(code-128))
+	}
 	return code
 }
 
@@ -271,7 +274,6 @@ func exitCode(state *os.ProcessState, err error) int {
 	}
 	if status, ok := state.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 		// The shell's convention, so a training process killed by SIGKILL makes hib exit 137.
-		fmt.Fprintf(os.Stderr, "hib: the training process ended on %v\n", status.Signal())
 		return 128 + int(status.Signal())
 	}
 	return state.ExitCode()
