@@ -55,7 +55,7 @@ func TestCopyOutputCopiesWhatArrivesUntilStop(t *testing.T) {
 
 func TestRelaySignalsPassesTheSignalOn(t *testing.T) {
 	// The training process exits 7 on SIGTERM, well before the grace period ends.
-	child := startShell(t, `trap "exit 7" TERM; while :; do sleep 0.05; done`)
+	child := startShell(t, `trap "exit 7" TERM; echo ready; while :; do sleep 0.05; done`)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan struct{})
 	defer close(exited)
@@ -68,7 +68,7 @@ func TestRelaySignalsPassesTheSignalOn(t *testing.T) {
 }
 
 func TestRelaySignalsKillsATrainingProcessThatIgnoresTheSignal(t *testing.T) {
-	child := startShell(t, `trap "" TERM INT; while :; do sleep 0.05; done`)
+	child := startShell(t, `trap "" TERM INT; echo ready; while :; do sleep 0.05; done`)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan struct{})
 	defer close(exited)
@@ -88,7 +88,7 @@ func TestRelaySignalsKillsATrainingProcessThatIgnoresTheSignal(t *testing.T) {
 // startShell starts sh with script, and waits until the shell has installed its traps.
 func startShell(t *testing.T, script string) *exec.Cmd {
 	t.Helper()
-	child := exec.Command("sh", "-c", "echo ready; "+script)
+	child := exec.Command("sh", "-c", script)
 	stdout, err := child.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
