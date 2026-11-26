@@ -24,7 +24,7 @@ How phase 5 makes the process snapshot on the checkpoint host and restores it on
 CRIU restores the training process exactly, so the restore host must hold what the process had open, byte for byte:
 
 - **The same PID and thread IDs, free.** Without a PID namespace, another process may hold one. Then `criu restore` fails, and `hib restore` falls back.
-- **The same files at the same paths:** python, the venv, the training script, and every shared library the process loaded. CRIU refuses a library whose size differs. On 2026-11-26, `unattended-upgrades` upgraded `libexpat` on one host and not the other, and the restore fell back. Hosts for a demo need the same packages, with automatic upgrades stopped.
+- **The same files at the same paths:** python, the venv, the training script, and every shared library the process loaded. CRIU refuses a library whose size differs. On 2026-11-26, `unattended-upgrades` upgraded `libexpat` on one host and not the other, and the restore fell back. All hosts of a workload need the same packages, with automatic upgrades stopped. `scripts/install-host.sh` does that, and installs CRIU and `cuda-checkpoint`.
 - **The same run directory** (`HIB_RUN_DIR`), because the training hook reconnects to the socket path it had.
 
 ## Fallback to the application checkpoint
