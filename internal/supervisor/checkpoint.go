@@ -29,6 +29,7 @@ const maxRetryWait = 5 * time.Second
 // attempt is one checkpoint. Every hib checkpoint that arrives while it runs waits for the same answer.
 type attempt struct {
 	root     string        // the restore point folder, chosen at the update boundary
+	appFiles []string      // the application checkpoint, written and waiting for the process snapshot
 	deadline time.Time     // when the attempt gives up; an upload's context ends then
 	done     chan struct{} // closed once result is set
 	result   protocol.CheckpointReply
@@ -156,10 +157,9 @@ func prepareFolder(root, app string) error {
 	return nil
 }
 
-// appCheckpointWritten runs when the training hook reports the application checkpoint. It writes
-// the manifest last. With no remote, the restore point is done, and the state moves to
-// Checkpointed. With a remote, the restore point still has to be published, so the state stays
-// Checkpointing while publish runs in the background.
+// appCheckpointWritten runs when the training hook reports the application checkpoint. With a
+// Snapshotter, the restore point waits for the process snapshot, which begins once the training
+// hook pauses. Without one, the restore point is finished now.
 func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
 	a := s.attempt
 	if s.state != Checkpointing || a.root == "" {
@@ -169,7 +169,68 @@ func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
 		s.fail("the training hook could not write the application checkpoint: " + hookError)
 		return
 	}
-	m, err := s.writeManifest(a.root, files)
+	if s.cfg.Snapshot != nil && s.pid != 0 {
+		a.appFiles = files
+		return
+	}
+	reason := s.cfg.NoSnapshot
+	if reason == "" {
+		reason = "hib makes no process snapshot here"
+	}
+	s.finish(a, files, manifest.Layer{Status: manifest.StatusFailed, Error: &reason, Files: []manifest.File{}})
+}
+
+// trainingHookPaused runs when the training hook closes its connection after app_checkpoint. It
+// starts the process snapshot, which runs without the lock: hib status and the deadline timer
+// need the lock meanwhile.
+func (s *Supervisor) trainingHookPaused() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.attempt
+	if s.state != Checkpointing || a == nil || a.appFiles == nil || s.finishing {
+		return
+	}
+	s.finishing = true
+	s.work.Add(1)
+	go s.dump(a, s.pid)
+}
+
+// dump makes the process snapshot, then finishes the restore point. A failed process snapshot
+// still leaves a restore point: the manifest records why, and a restore uses the application
+// checkpoint.
+func (s *Supervisor) dump(a *attempt, pid int) {
+	defer s.work.Done()
+	files, err := s.cfg.Snapshot.Dump(pid, a.root, dumpDeadline(time.Now(), a.deadline))
+	layer := manifest.Layer{Status: manifest.StatusOK, Files: []manifest.File{}}
+	if err == nil {
+		layer.Files, err = manifest.Describe(a.root, files)
+	}
+	if err != nil {
+		reason := err.Error()
+		layer = manifest.Layer{Status: manifest.StatusFailed, Error: &reason, Files: []manifest.File{}}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.finishing = false
+	if s.state != Checkpointing || s.attempt != a {
+		return // the deadline passed during the dump, and the attempt already failed
+	}
+	s.finish(a, a.appFiles, layer)
+}
+
+// dumpDeadline gives the process snapshot half the time left before the attempt gives up. The rest
+// is for the manifest and the upload, so a slow dump still leaves a restore point that holds the
+// application checkpoint.
+func dumpDeadline(now, giveUp time.Time) time.Time {
+	return now.Add(giveUp.Sub(now) / 2)
+}
+
+// finish writes the manifest last. With no remote, the restore point is done, and the state moves
+// to Checkpointed. With a remote, the restore point still has to be published, so the state stays
+// Checkpointing while publish runs in the background.
+func (s *Supervisor) finish(a *attempt, appFiles []string, snapshot manifest.Layer) {
+	m, err := s.writeManifest(a.root, appFiles, snapshot)
 	if err != nil {
 		s.fail("write the manifest: " + err.Error())
 		return
@@ -179,7 +240,7 @@ func (s *Supervisor) appCheckpointWritten(files []string, hookError string) {
 		return
 	}
 	rp := layout.RestorePoint{Bucket: s.cfg.Remote.Bucket, Workload: m.Workload, Step: m.Step, Attempt: layout.NewAttempt(time.Now())}
-	s.uploading = true
+	s.finishing = true
 	s.work.Add(1)
 	go s.publish(a, rp, m)
 }
@@ -201,7 +262,7 @@ func (s *Supervisor) publish(a *attempt, rp layout.RestorePoint, m manifest.Mani
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.uploading = false
+	s.finishing = false
 	if s.state != Checkpointing || s.attempt != a {
 		return // the deadline passed during the upload, and the attempt already failed
 	}
@@ -234,7 +295,7 @@ func publishWithRetry(ctx context.Context, st store.Store, root, attempt string)
 	}
 }
 
-func (s *Supervisor) writeManifest(root string, written []string) (manifest.Manifest, error) {
+func (s *Supervisor) writeManifest(root string, written []string, snapshot manifest.Layer) (manifest.Manifest, error) {
 	if s.host == nil {
 		return manifest.Manifest{}, errors.New("the training hook never sent initialize, so the fingerprint is unknown")
 	}
@@ -251,7 +312,6 @@ func (s *Supervisor) writeManifest(root string, written []string) (manifest.Mani
 		return manifest.Manifest{}, err
 	}
 
-	notBuilt := "not built yet"
 	m := manifest.Manifest{
 		SchemaVersion: manifest.SchemaVersion,
 		Workload:      s.cfg.Workload,
@@ -261,9 +321,12 @@ func (s *Supervisor) writeManifest(root string, written []string) (manifest.Mani
 		Python:        s.host.python,
 		Command:       s.cfg.Command,
 		Layers: manifest.Layers{
-			ProcessSnapshot:       manifest.Layer{Status: manifest.StatusFailed, Error: &notBuilt, Files: []manifest.File{}},
+			ProcessSnapshot:       snapshot,
 			ApplicationCheckpoint: manifest.Layer{Status: manifest.StatusOK, Files: files},
 		},
+	}
+	if snapshot.Status == manifest.StatusOK {
+		m.Output = s.cfg.Output
 	}
 	return m, manifest.Write(root, m)
 }

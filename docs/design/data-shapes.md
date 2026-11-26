@@ -80,6 +80,7 @@ A restore point is one folder in S3. It holds the process snapshot files, the ap
     "cwd": "/home/ubuntu/run",
     "env": {"...": "..."}
   },
+  "output": "/tmp/hib-0/demo.log",
   "layers": {
     "process_snapshot": {
       "status": "failed",
@@ -128,7 +129,7 @@ The module reads the GPU model and driver version from the NVIDIA driver's files
 
 ### First build
 
-The fake checkpoint writes a stand-in application checkpoint: one file, `app/step.json`, that holds only the step. The process snapshot is `"status": "failed"` with the error `"not built yet"`. So the first build exercises the fallback path: `hib restore` starts a fresh training process from `command`, and that process reads the step from the file.
+The fake checkpoint writes a stand-in application checkpoint: one file, `app/step.json`, that holds only the step. Without CRIU, the process snapshot is `"status": "failed"` with the reason, such as `"CRIU needs root, and hib runs as a regular user"`. So the first build exercises the fallback path: `hib restore` starts a fresh training process from `command`, and that process reads the step from the file.
 
 ### Open questions
 

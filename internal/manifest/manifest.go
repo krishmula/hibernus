@@ -29,7 +29,10 @@ type Manifest struct {
 	Fingerprint   Fingerprint `json:"fingerprint"`
 	Python        string      `json:"python"` // the interpreter that collects the fingerprint on a restore host
 	Command       Command     `json:"command"`
-	Layers        Layers      `json:"layers"`
+	// Output is where the training process wrote its output on the checkpoint host. CRIU reopens
+	// the file by that path, so a restore from the process snapshot puts output.log back there.
+	Output string `json:"output,omitempty"`
+	Layers Layers `json:"layers"`
 }
 
 // Fingerprint describes a host and the Python environment of its training process. A restore runs only

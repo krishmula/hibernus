@@ -49,16 +49,28 @@ location=$("$hib" checkpoint --workload e2e --deadline 10s) || fail "hib checkpo
 k=$(sed -n 's/.*"step": \([0-9]*\).*/\1/p' "$location/manifest.json" | head -1)
 [ -n "$k" ] || fail "no step in $location/manifest.json"
 [ "$location" = "$store/e2e/step-$k" ] || fail "location $location, want $store/e2e/step-$k"
-"$hib" status --workload e2e | grep -q '^state: Checkpointed$' || fail "state is not Checkpointed"
 
-# 3. Training stays paused at step K, and a second checkpoint returns the same restore point.
-sleep 0.5
-[ "$(tail -1 "$work/run.log")" = "step $k" ] || fail "training went on after the checkpoint: $(tail -1 "$work/run.log")"
-[ "$("$hib" checkpoint --workload e2e)" = "$location" ] || fail "a second hib checkpoint gave another location"
+# On Linux as root with CRIU, the restore point also holds the process snapshot.
+snapshot=$("$python" -c "import json, sys; print(json.load(open(sys.argv[1]))['layers']['process_snapshot']['status'])" "$location/manifest.json")
+echo "process snapshot: $snapshot"
 
-# 4. The checkpoint host goes away: stop the training process, and hib run exits with it.
-pkill -P "$run_pid"
-wait "$run_pid" || true
+if [ "$snapshot" = ok ]; then
+	# 3. CRIU ended the training process at step K, and hib run exits 0: the workload is checkpointed.
+	code=0
+	wait "$run_pid" || code=$?
+	[ "$code" -eq 0 ] || fail "hib run exited $code after the process snapshot, want 0: $(cat "$work/run.err")"
+	[ "$(tail -1 "$work/run.log")" = "step $k" ] || fail "training went on after the checkpoint: $(tail -1 "$work/run.log")"
+else
+	# 3. Training stays paused at step K, and a second checkpoint returns the same restore point.
+	"$hib" status --workload e2e | grep -q '^state: Checkpointed$' || fail "state is not Checkpointed"
+	sleep 0.5
+	[ "$(tail -1 "$work/run.log")" = "step $k" ] || fail "training went on after the checkpoint: $(tail -1 "$work/run.log")"
+	[ "$("$hib" checkpoint --workload e2e)" = "$location" ] || fail "a second hib checkpoint gave another location"
+
+	# 4. The checkpoint host goes away: stop the training process, and hib run exits with it.
+	pkill -P "$run_pid"
+	wait "$run_pid" || true
+fi
 expect_exit 3 "$hib" status --workload e2e
 
 # 5. hib restore refuses a damaged restore point, and a folder without a manifest.
@@ -77,10 +89,22 @@ expect_exit 1 "$hib" restore --store "$store" "$work/other-driver"
 grep -q 'driver: checkpoint host 999.99' "$work/out" || fail "the other-driver restore point failed for another reason: $(cat "$work/out")"
 grep -q '^step ' "$work/out" && fail "training started on a host whose fingerprint differs"
 
-# 7. Restore. Training continues at step K+1 and runs to the end.
-"$hib" restore --store "$store" "$location" >"$work/restore.log" || fail "hib restore exited $?: $(cat "$work/restore.log")"
+# 7. Restore. Training continues at step K+1 and runs to the end, from the process snapshot when
+# the restore point has one.
+"$hib" restore --store "$store" "$location" >"$work/restore.log" 2>"$work/restore.err" || fail "hib restore exited $?: $(cat "$work/restore.err")"
 [ "$(head -1 "$work/restore.log")" = "step $((k + 1))" ] || fail "restore began at '$(head -1 "$work/restore.log")', want 'step $((k + 1))'"
 [ "$(tail -1 "$work/restore.log")" = "step $steps" ] || fail "restore ended at '$(tail -1 "$work/restore.log")', want 'step $steps'"
+if [ "$snapshot" = ok ]; then
+	grep -q "restored the process snapshot at step $k" "$work/restore.err" || fail "the restore didn't use the process snapshot: $(cat "$work/restore.err")"
+
+	# 7b. A damaged process snapshot falls back to the application checkpoint.
+	cp -R "$location" "$work/damaged-snapshot"
+	image=$(find "$work/damaged-snapshot/process" -name 'pages-*.img' | head -1)
+	printf x | dd of="$image" bs=1 seek=100 conv=notrunc 2>/dev/null
+	"$hib" restore --store "$store" "$work/damaged-snapshot" >"$work/fallback.log" 2>"$work/fallback.err" || fail "the fallback restore exited $?: $(cat "$work/fallback.err")"
+	grep -q "using the application checkpoint, because the process snapshot: .*checksum" "$work/fallback.err" || fail "the damaged snapshot didn't fall back: $(cat "$work/fallback.err")"
+	[ "$(head -1 "$work/fallback.log")" = "step $((k + 1))" ] || fail "the fallback began at '$(head -1 "$work/fallback.log")', want 'step $((k + 1))'"
+fi
 
 # 8. The training process runs in its own session, so Ctrl+C at the terminal reaches only hib. hib
 # passes SIGINT and SIGTERM on, and exits with the training process's code.
@@ -96,4 +120,4 @@ for sig in INT TERM; do
 	[ "$code" -eq "$want" ] || fail "after SIG$sig, hib run exited $code, want $want: $(cat "$work/signals.log")"
 done
 
-echo "e2e passed: checkpointed at step $k, restored at step $((k + 1))"
+echo "e2e passed: checkpointed at step $k, restored at step $((k + 1)), process snapshot: $snapshot"

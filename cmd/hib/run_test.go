@@ -44,7 +44,7 @@ func TestCopyOutputCopiesWhatArrivesUntilStop(t *testing.T) {
 	var got syncBuffer
 	stop := copyOutput(reader, &got)
 	writer.WriteString("step 1\n")
-	waitFor(t, func() bool { return got.String() == "step 1\n" })
+	waitUntil(t, func() bool { return got.String() == "step 1\n" })
 	writer.WriteString("step 2\n") // written just before stop, so only stop's last copy can catch it
 	stop()
 
@@ -62,7 +62,7 @@ func TestRelaySignalsPassesTheSignalOn(t *testing.T) {
 	go relaySignals(signals, child.Process, time.Minute, exited)
 
 	signals <- syscall.SIGTERM
-	if code := childExitCode(child.Wait()); code != 7 {
+	if code := exitCode(child.Process.Wait()); code != 7 {
 		t.Errorf("the training process exited %d, want 7", code)
 	}
 }
@@ -76,7 +76,7 @@ func TestRelaySignalsKillsATrainingProcessThatIgnoresTheSignal(t *testing.T) {
 
 	start := time.Now()
 	signals <- syscall.SIGTERM
-	code := childExitCode(child.Wait())
+	code := exitCode(child.Process.Wait())
 	if code != 128+int(syscall.SIGKILL) {
 		t.Errorf("hib would exit %d, want %d", code, 128+int(syscall.SIGKILL))
 	}
@@ -104,7 +104,7 @@ func startShell(t *testing.T, script string) *exec.Cmd {
 	return child
 }
 
-func waitFor(t *testing.T, done func() bool) {
+func waitUntil(t *testing.T, done func() bool) {
 	t.Helper()
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
 		if done() {
