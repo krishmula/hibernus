@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/krishmula/hibernus/internal/manifest"
@@ -87,6 +88,45 @@ func superviseSnapshot(cfg supervisor.Config, resume *protocol.Resume, root stri
 	}
 	fmt.Fprintf(os.Stderr, "hib restore: restored the process snapshot at step %d\n", m.Step)
 	return se.run(process, exited, output), nil
+}
+
+// criuRelease is a CRIU version.
+type criuRelease struct{ major, minor int }
+
+// parseCRIUVersion reads the output of criu --version, which starts with "Version: 4.3".
+func parseCRIUVersion(out string) (criuRelease, error) {
+	var v criuRelease
+	if _, err := fmt.Sscanf(out, "Version: %d.%d", &v.major, &v.minor); err != nil {
+		return criuRelease{}, fmt.Errorf("read the CRIU version from %q", strings.TrimSpace(out))
+	}
+	return v, nil
+}
+
+func (v criuRelease) atLeast(major, minor int) bool {
+	return v.major > major || v.major == major && v.minor >= minor
+}
+
+// usable requires CRIU 3.17, the first that restores glibc's rseq.
+func (v criuRelease) usable() error {
+	if !v.atLeast(3, 17) {
+		return fmt.Errorf("CRIU %d.%d is older than 3.17, which can't restore glibc's rseq", v.major, v.minor)
+	}
+	return nil
+}
+
+// gpuProblem says why a training process with the GPU open can't be dumped, or "" when it can.
+// CRIU's CUDA plugin, which first shipped in CRIU 4.0, runs cuda-checkpoint during the dump and
+// the restore. A host without a GPU has no problem to report.
+func (v criuRelease) gpuProblem(hasGPU, hasCudaCheckpoint bool) string {
+	switch {
+	case !hasGPU:
+		return ""
+	case !v.atLeast(4, 0):
+		return fmt.Sprintf("CRIU %d.%d has no CUDA plugin; install CRIU 4.0 or later", v.major, v.minor)
+	case !hasCudaCheckpoint:
+		return "cuda-checkpoint is not on PATH; install it from github.com/NVIDIA/cuda-checkpoint"
+	}
+	return ""
 }
 
 // copyFile copies src to dst, replacing dst, and makes dst's folder if it is missing.
