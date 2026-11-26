@@ -58,12 +58,20 @@ func restoreCommand(args []string) int {
 		return exitFailed
 	}
 
-	return supervise(supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command, Remote: remote}, resume)
+	cfg := supervisor.Config{Workload: m.Workload, Store: storeDir, Command: m.Command, Remote: remote, Output: protocol.OutputPath(m.Workload)}
+	cfg.Snapshot, cfg.NoSnapshot = processSnapshotter(cfg.Output)
+	// The process snapshot first. It brings back the training process exactly as it was.
+	code, err := superviseSnapshot(cfg, resume, root, m)
+	if err == nil {
+		return code
+	}
+	fmt.Fprintf(os.Stderr, "hib restore: using the application checkpoint, because %v\n", err)
+	return supervise(cfg, resume)
 }
 
 // resumeFromApplicationCheckpoint checks that the application checkpoint can bring the workload back
-// in a fresh training process, and returns what the training hook loads. The first build never writes a process
-// snapshot, so every restore takes this path.
+// in a fresh training process, and returns what the training hook loads. hib restore needs it even
+// when the process snapshot works, as the fallback.
 func resumeFromApplicationCheckpoint(root string, m manifest.Manifest) (*protocol.Resume, error) {
 	if !validWorkloadName.MatchString(m.Workload) {
 		return nil, fmt.Errorf("the manifest names workload %q, which is not a valid name", m.Workload)

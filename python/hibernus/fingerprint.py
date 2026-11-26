@@ -55,7 +55,14 @@ def _torch():
         import torch
     except ImportError:
         return {"cuda": NONE, "cudnn": NONE, "pytorch": NONE}
-    cudnn = torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
+    # Ask the cuDNN library directly. torch.backends.cudnn.version() and is_available() open the
+    # GPU in the training process, and a process with the GPU open needs cuda-checkpoint to dump.
+    try:
+        from torch._C import _cudnn
+
+        cudnn = _cudnn.getVersionInt()
+    except (ImportError, AttributeError):  # a PyTorch built without cuDNN
+        cudnn = None
     return {
         "cuda": torch.version.cuda or NONE,
         "cudnn": str(cudnn) if cudnn else NONE,

@@ -28,6 +28,21 @@ type Config struct {
 	// Remote is where a checkpoint is published before it counts as done. Nil means the restore
 	// point stays in Store, and a checkpoint is done as soon as its manifest is written.
 	Remote *Remote
+
+	// Snapshot makes the process snapshot. Nil means restore points hold only the application
+	// checkpoint, and NoSnapshot says why, for the manifest.
+	Snapshot   Snapshotter
+	NoSnapshot string
+	// Output is the file the training process writes to. The manifest records it, so that a
+	// restore from the process snapshot can put the file back where CRIU expects it.
+	Output string
+}
+
+// Snapshotter makes the process snapshot of the training process.
+type Snapshotter interface {
+	// Dump writes the training process's process snapshot into the restore point
+	// folder root. The training process ends. Dump returns the files it wrote, relative to root.
+	Dump(pid int, root string) ([]string, error)
 }
 
 // Remote is durable storage for restore points: an S3 bucket.
@@ -41,14 +56,16 @@ type Supervisor struct {
 
 	// mu guards the fields in this block. handle, join, ChildExited, giveUp, and publish take it,
 	// and every method they call runs with it already held.
-	mu        sync.Mutex
-	state     State
-	step      int
-	resume    *protocol.Resume // what initialize answers; nil for a fresh run
-	host      *host            // what initialize reported, recorded in each manifest; nil before initialize
-	attempt   *attempt         // the latest checkpoint, in progress or finished
-	err       string           // why the workload Failed
-	uploading bool             // the restore point is being published; the training process may already be gone
+	mu           sync.Mutex
+	state        State
+	step         int
+	resume       *protocol.Resume // what initialize answers; nil for a fresh run
+	host         *host            // what initialize reported, recorded in each manifest; nil before initialize
+	attempt      *attempt         // the latest checkpoint, in progress or finished
+	err          string           // why the workload Failed
+	pid          int              // the training process, for the process snapshot
+	finishing    bool             // the process snapshot or the upload runs; the training process may already be gone
+	restoreEnded chan struct{}    // closed when Restoring ends; nil for a fresh run
 
 	work sync.WaitGroup // uploads in flight, so hib run doesn't exit under one
 }
@@ -67,8 +84,26 @@ func New(cfg Config, resume *protocol.Resume) *Supervisor {
 		s.state = Restoring
 		s.step = resume.Step
 		s.resume = resume
+		s.restoreEnded = make(chan struct{})
 	}
 	return s
+}
+
+// TrainingProcess tells the Supervisor which process to put in the process snapshot.
+func (s *Supervisor) TrainingProcess(pid int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pid = pid
+}
+
+// Restored is closed when Restoring ends, through restored or initialize.
+func (s *Supervisor) Restored() <-chan struct{} { return s.restoreEnded }
+
+// Checkpointed reports whether the workload's latest checkpoint finished.
+func (s *Supervisor) Checkpointed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state == Checkpointed
 }
 
 // Settle waits for an upload in flight. hib run calls it after the training process exits, so
@@ -78,9 +113,9 @@ func (s *Supervisor) Settle() { s.work.Wait() }
 func (s *Supervisor) ChildExited(code int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.uploading {
-		// The restore point is already complete on this host, so the process ending does not
-		// change it. publish decides the state when the upload ends.
+	if s.finishing {
+		// CRIU ends the training process when it dumps it, and an upload can outlast the process.
+		// Either way, dump or publish decides the state when it ends.
 		return
 	}
 	next := afterChildExit(s.state, code)
@@ -141,6 +176,14 @@ func (s *Supervisor) serveConn(conn net.Conn) {
 	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	encoder := json.NewEncoder(conn)
+	// After app_checkpoint, the training hook closes this connection and waits for SIGCONT. The
+	// close means it is ready for the process snapshot.
+	paused := false
+	defer func() {
+		if paused {
+			s.trainingHookPaused()
+		}
+	}()
 	for scanner.Scan() {
 		var req protocol.Request
 		var reply any
@@ -148,6 +191,7 @@ func (s *Supervisor) serveConn(conn net.Conn) {
 			reply = protocol.Refusal{Reason: "bad message: " + err.Error()}
 		} else {
 			reply = s.handle(req)
+			paused = req.Op == protocol.OpAppCheckpoint
 		}
 		if reply == nil {
 			continue
@@ -247,6 +291,7 @@ func (s *Supervisor) keepHost(op string, fingerprint *manifest.Fingerprint, pyth
 
 // endRestoring moves to Running, or begins a hib checkpoint that arrived during Restoring and waits.
 func (s *Supervisor) endRestoring() {
+	close(s.restoreEnded)
 	s.state = Running
 	if s.attempt != nil {
 		s.state = Checkpointing
