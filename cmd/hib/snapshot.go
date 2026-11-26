@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/krishmula/hibernus/internal/manifest"
@@ -46,48 +47,108 @@ func superviseSnapshot(cfg supervisor.Config, resume *protocol.Resume, root stri
 		return 0, errors.New("the manifest records no output file for the process snapshot")
 	}
 
-	// CRIU reopens the output file by its path and offset, so it must be back at that path first.
-	if err := copyFile(filepath.Join(root, outputCopy), m.Output); err != nil {
-		return 0, fmt.Errorf("put the output file back: %w", err)
-	}
-	output, err := os.Open(m.Output)
-	if err != nil {
-		return 0, err
-	}
-	defer output.Close()
-	if _, err := output.Seek(0, io.SeekEnd); err != nil { // copy only what the training process writes from now on
-		return 0, err
-	}
-
+	// The session comes first: it refuses when another Supervisor already runs this workload, before
+	// anything here touches that workload's output file.
 	se, err := openSession(cfg, resume)
 	if err != nil {
 		return 0, err
 	}
+	// CRIU reopens the output file by its path and offset, so it must be back at that path first.
+	output, err := restoreOutput(root, m.Output)
+	if err != nil {
+		se.close()
+		return 0, err
+	}
+	defer output.Close()
+
 	process, err := restoreProcess(root)
 	if err != nil {
 		se.close()
 		return 0, err
 	}
 	exited := waitFor(process)
-	if err := wake(process); err != nil {
+	abort := func() {
 		process.Kill()
 		<-exited
 		se.close()
+	}
+	// Ctrl+C or SIGTERM during the restore ends hib restore. It must not fall back and start training.
+	select {
+	case sig := <-se.signals:
+		abort()
+		return canceled(sig)
+	default:
+	}
+	if err := wake(process); err != nil {
+		abort()
 		return 0, err
 	}
 	select {
 	case <-se.sup.Restored():
 	case code := <-exited:
-		se.close()
-		return 0, fmt.Errorf("the restored training process exited with code %d before it sent restored", code)
+		if !closed(se.sup.Restored()) {
+			se.close()
+			return 0, fmt.Errorf("the restored training process exited with code %d before it sent restored", code)
+		}
+		// It sent restored and then finished, before this select saw restored. Training is done,
+		// so it must not run again from the application checkpoint.
+		exited = exitCodeOf(code)
+	case sig := <-se.signals:
+		abort()
+		return canceled(sig)
 	case <-time.After(restoredTimeout):
-		process.Kill()
-		<-exited
-		se.close()
-		return 0, fmt.Errorf("the restored training process sent no restored within %s", restoredTimeout)
+		if !closed(se.sup.Restored()) {
+			abort()
+			return 0, fmt.Errorf("the restored training process sent no restored within %s", restoredTimeout)
+		}
 	}
 	fmt.Fprintf(os.Stderr, "hib restore: restored the process snapshot at step %d\n", m.Step)
 	return se.run(process, exited, output), nil
+}
+
+// errCanceled means a signal ended hib restore, so it must not fall back to the application checkpoint.
+var errCanceled = errors.New("canceled")
+
+// canceled returns the shell's exit code for sig, such as 130 for SIGINT.
+func canceled(sig os.Signal) (int, error) {
+	fmt.Fprintf(os.Stderr, "hib restore: %v during the restore, so hib stops without training\n", sig)
+	code := exitFailed
+	if s, ok := sig.(syscall.Signal); ok {
+		code = 128 + int(s)
+	}
+	return code, errCanceled
+}
+
+func closed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+func exitCodeOf(code int) <-chan int {
+	ch := make(chan int, 1)
+	ch <- code
+	return ch
+}
+
+// restoreOutput puts the output file from the restore point back at path, and returns a reader at
+// its end, so hib copies only what the training process writes from now on.
+func restoreOutput(root, path string) (*os.File, error) {
+	if err := copyFile(filepath.Join(root, outputCopy), path); err != nil {
+		return nil, fmt.Errorf("put the output file back: %w", err)
+	}
+	output, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := output.Seek(0, io.SeekEnd); err != nil {
+		output.Close()
+		return nil, err
+	}
+	return output, nil
 }
 
 // criuRelease is a CRIU version.

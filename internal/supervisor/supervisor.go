@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/krishmula/hibernus/internal/manifest"
 	"github.com/krishmula/hibernus/internal/protocol"
@@ -40,9 +41,10 @@ type Config struct {
 
 // Snapshotter makes the process snapshot of the training process.
 type Snapshotter interface {
-	// Dump writes the training process's process snapshot into the restore point
-	// folder root. The training process ends. Dump returns the files it wrote, relative to root.
-	Dump(pid int, root string) ([]string, error)
+	// Dump writes the training process's process snapshot into the restore point folder root,
+	// and gives up at deadline. The training process ends. Dump returns the files it wrote,
+	// relative to root.
+	Dump(pid int, root string, deadline time.Time) ([]string, error)
 }
 
 // Remote is durable storage for restore points: an S3 bucket.

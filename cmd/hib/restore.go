@@ -62,7 +62,7 @@ func restoreCommand(args []string) int {
 	cfg.Snapshot, cfg.NoSnapshot = processSnapshotter(cfg.Output)
 	// The process snapshot first. It brings back the training process exactly as it was.
 	code, err := superviseSnapshot(cfg, resume, root, m)
-	if err == nil {
+	if err == nil || errors.Is(err, errCanceled) {
 		return code
 	}
 	fmt.Fprintf(os.Stderr, "hib restore: using the application checkpoint, because %v\n", err)

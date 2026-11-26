@@ -200,7 +200,7 @@ func (s *Supervisor) trainingHookPaused() {
 // checkpoint.
 func (s *Supervisor) dump(a *attempt, pid int) {
 	defer s.work.Done()
-	files, err := s.cfg.Snapshot.Dump(pid, a.root)
+	files, err := s.cfg.Snapshot.Dump(pid, a.root, dumpDeadline(time.Now(), a.deadline))
 	layer := manifest.Layer{Status: manifest.StatusOK, Files: []manifest.File{}}
 	if err == nil {
 		layer.Files, err = manifest.Describe(a.root, files)
@@ -217,6 +217,13 @@ func (s *Supervisor) dump(a *attempt, pid int) {
 		return // the deadline passed during the dump, and the attempt already failed
 	}
 	s.finish(a, a.appFiles, layer)
+}
+
+// dumpDeadline gives the process snapshot half the time left before the attempt gives up. The rest
+// is for the manifest and the upload, so a slow dump still leaves a restore point that holds the
+// application checkpoint.
+func dumpDeadline(now, giveUp time.Time) time.Time {
+	return now.Add(giveUp.Sub(now) / 2)
 }
 
 // finish writes the manifest last. With no remote, the restore point is done, and the state moves

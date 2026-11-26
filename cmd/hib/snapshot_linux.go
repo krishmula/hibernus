@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/krishmula/hibernus/internal/supervisor"
 )
@@ -66,7 +68,7 @@ type criu struct {
 // Dump dumps the training process. CRIU freezes it for the dump and ends it afterwards. hib sends
 // no SIGSTOP first: CRIU's CUDA plugin has to talk to the running process to pause CUDA, and the
 // training hook wakes on SIGCONT whether or not the process was stopped.
-func (c criu) Dump(pid int, root string) ([]string, error) {
+func (c criu) Dump(pid int, root string, deadline time.Time) ([]string, error) {
 	if c.gpuProblem != "" && gpuOpen(pid) {
 		// criu dump would fail or hang on the GPU, so don't try. The training process keeps
 		// waiting in the training hook, and the restore point holds the application checkpoint.
@@ -80,7 +82,14 @@ func (c criu) Dump(pid int, root string) ([]string, error) {
 		return nil, err
 	}
 	log := filepath.Join(root, "criu-dump.log") // outside images, so the manifest doesn't checksum it
-	out, err := exec.Command("criu", "dump", "-t", strconv.Itoa(pid), "-D", images, "-o", log, "-v4").CombinedOutput()
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	dump := exec.CommandContext(ctx, "criu", "dump", "-t", strconv.Itoa(pid), "-D", images, "-o", log, "-v4")
+	dump.WaitDelay = time.Second
+	out, err := dump.CombinedOutput()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("criu dump didn't finish by %s, the time it had before the checkpoint deadline", deadline.Format(time.TimeOnly))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("criu dump: %v: %s", err, criuReason(log, out))
 	}

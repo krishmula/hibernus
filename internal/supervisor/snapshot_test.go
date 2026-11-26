@@ -15,14 +15,19 @@ import (
 // one does, and records which process it was asked to dump.
 type fakeSnapshotter struct {
 	err    error
+	hang   bool   // block until the deadline, as a stuck criu dump would
 	during func() // runs inside Dump, as CRIU ending the training process would
 	pid    chan int
 }
 
 func newFakeSnapshotter() *fakeSnapshotter { return &fakeSnapshotter{pid: make(chan int, 1)} }
 
-func (f *fakeSnapshotter) Dump(pid int, root string) ([]string, error) {
+func (f *fakeSnapshotter) Dump(pid int, root string, deadline time.Time) ([]string, error) {
 	f.pid <- pid
+	if f.hang {
+		time.Sleep(time.Until(deadline))
+		return nil, errors.New("criu dump didn't finish in time")
+	}
 	if f.during != nil {
 		f.during()
 	}
@@ -44,6 +49,10 @@ func (f *fakeSnapshotter) Dump(pid int, root string) ([]string, error) {
 // checkpointWithSnapshot runs one checkpoint at step 2 with snap as the Snapshotter, and returns
 // hib checkpoint's answer and the manifest.
 func checkpointWithSnapshot(t *testing.T, snap *fakeSnapshotter, configure func(*Supervisor)) (bool, manifest.Manifest) {
+	return checkpointWithSnapshotBy(t, snap, configure, 5*time.Second)
+}
+
+func checkpointWithSnapshotBy(t *testing.T, snap *fakeSnapshotter, configure func(*Supervisor), deadline time.Duration) (bool, manifest.Manifest) {
 	t.Helper()
 	store := t.TempDir()
 	sup := New(Config{Workload: "w", Store: store, Snapshot: snap, Output: "/run/hib/w.log"}, nil)
@@ -52,7 +61,7 @@ func checkpointWithSnapshot(t *testing.T, snap *fakeSnapshotter, configure func(
 		configure(sup)
 	}
 	path := serve(t, sup)
-	answer := requestCheckpoint(t, path, 5*time.Second)
+	answer := requestCheckpoint(t, path, deadline)
 	finishCheckpoint(t, path, 2)
 	reply := receive(t, answer)
 	m, err := manifest.Load(filepath.Join(store, "w", "step-2"))
@@ -132,5 +141,18 @@ func TestWithoutASnapshotterTheManifestSaysWhy(t *testing.T) {
 	}
 	if layer := m.Layers.ProcessSnapshot; layer.Status != manifest.StatusFailed || layer.Error == nil || *layer.Error != "criu is not installed" {
 		t.Errorf("process snapshot layer = %+v, want failed because criu is not installed", layer)
+	}
+}
+
+func TestAStuckDumpStillLeavesTheApplicationCheckpointBeforeTheDeadline(t *testing.T) {
+	snap := newFakeSnapshotter()
+	snap.hang = true
+	ok, m := checkpointWithSnapshotBy(t, snap, nil, 2*time.Second)
+
+	if !ok {
+		t.Fatal("the checkpoint failed at the deadline, but the application checkpoint was written")
+	}
+	if layer := m.Layers.ProcessSnapshot; layer.Status != manifest.StatusFailed {
+		t.Errorf("process snapshot layer = %+v, want failed", layer)
 	}
 }
